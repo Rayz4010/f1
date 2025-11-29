@@ -5,11 +5,18 @@ import neat
 
 pygame.init()
 
-SCREEN_WIDTH = 1244
-SCREEN_HEIGHT = 1016
-SCREEN = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+# Get screen info for fullscreen
+info = pygame.display.Info()
+SCREEN_WIDTH = info.current_w
+SCREEN_HEIGHT = info.current_h
+SCREEN = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.FULLSCREEN)
 
 TRACK = pygame.image.load(os.path.join("assets", "track.png"))
+original_width, original_height = TRACK.get_width(), TRACK.get_height()
+TRACK = pygame.transform.scale(TRACK, (SCREEN_WIDTH, SCREEN_HEIGHT))
+scale_x = SCREEN_WIDTH / original_width
+scale_y = SCREEN_HEIGHT / original_height
+scale = min(scale_x, scale_y)  # Use minimum scale to avoid distortion in distances
 
 # Add font for timer display
 FONT = pygame.font.SysFont(None, 24)
@@ -20,15 +27,17 @@ class Car(pygame.sprite.Sprite):
     def __init__(self):
         super().__init__()
         self.original_image = pygame.image.load(os.path.join("assets", "car.png"))
+        car_scale = scale * 0.2  # Reduce car size further (changed from 0.5 to 0.25)
+        self.original_image = pygame.transform.scale(self.original_image, (int(self.original_image.get_width() * car_scale), int(self.original_image.get_height() * car_scale)))
         self.image = self.original_image
-        self.rect = self.image.get_rect(center=(490, 820))
+        self.start_pos = (490 * scale_x, 820 * scale_y)
+        self.rect = self.image.get_rect(center=self.start_pos)
         self.vel_vector = pygame.math.Vector2(0.8, 0)
         self.angle = 0
         self.rotation_vel = 5
         self.direction = 0
         self.alive = True
         self.radars = []
-        self.start_pos = (490, 820)
         self.lap_started = False
         self.lap_completed = False
         self.lap_time = 0
@@ -39,6 +48,7 @@ class Car(pygame.sprite.Sprite):
         self.steer_right = 0
         self.brake = 0
         self.accelerator = 0
+        self.scale = scale
 
     def update(self):
         self.radars.clear()
@@ -58,11 +68,11 @@ class Car(pygame.sprite.Sprite):
 
     def check_lap(self):
         if not self.lap_started:
-            if math.sqrt((self.rect.center[0] - self.start_pos[0])**2 + (self.rect.center[1] - self.start_pos[1])**2) > 50:
+            if math.sqrt((self.rect.center[0] - self.start_pos[0])**2 + (self.rect.center[1] - self.start_pos[1])**2) > 50 * self.scale:
                 self.lap_started = True
                 self.lap_start_time = pygame.time.get_ticks()
         if self.lap_started and not self.lap_completed:
-            if math.sqrt((self.rect.center[0] - self.start_pos[0])**2 + (self.rect.center[1] - self.start_pos[1])**2) < 50:
+            if math.sqrt((self.rect.center[0] - self.start_pos[0])**2 + (self.rect.center[1] - self.start_pos[1])**2) < 50 * self.scale:
                 self.lap_completed = True
                 self.lap_time = pygame.time.get_ticks() - self.lap_start_time
                 self.lap_times.append(self.lap_time)
@@ -72,7 +82,7 @@ class Car(pygame.sprite.Sprite):
                 self.lap_start_time = 0
 
     def collision(self):
-        length = 40
+        length = 40 * self.scale
         collision_point_right = [int(self.rect.center[0] + math.cos(math.radians(self.angle + 18)) * length),
                                  int(self.rect.center[1] - math.sin(math.radians(self.angle + 18)) * length)]
         collision_point_left = [int(self.rect.center[0] + math.cos(math.radians(self.angle - 18)) * length),
@@ -95,7 +105,7 @@ class Car(pygame.sprite.Sprite):
             self.angle += self.rotation_vel
             self.vel_vector.rotate_ip(-self.rotation_vel)
 
-        self.image = pygame.transform.rotozoom(self.original_image, self.angle, 0.1)
+        self.image = pygame.transform.rotozoom(self.original_image, self.angle, 1)
         self.rect = self.image.get_rect(center=self.rect.center)
 
     def radar(self, radar_angle):
@@ -103,7 +113,7 @@ class Car(pygame.sprite.Sprite):
         x = int(self.rect.center[0])
         y = int(self.rect.center[1])
 
-        while length < 200:
+        while length < 200 * self.scale:
             if not (0 <= x < SCREEN_WIDTH and 0 <= y < SCREEN_HEIGHT):
                 break
             if SCREEN.get_at((x, y)) == pygame.Color(2, 105, 31, 255):
@@ -150,7 +160,7 @@ def eval_genomes(genomes, config):
     clock = pygame.time.Clock()
     start_time = pygame.time.get_ticks()
     run = True
-    while run and not any(car_group.sprite.lap_completed for car_group in cars) and (pygame.time.get_ticks() - start_time) < 30000:  # Stop when any car completes a lap or 30 seconds
+    while run and not any(car_group.sprite.lap_completed for car_group in cars) and (pygame.time.get_ticks() - start_time) < 360000:  # Stop when any car completes a lap or 30 seconds
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 quit_flag = True
@@ -195,19 +205,6 @@ def eval_genomes(genomes, config):
                     last_time = car.lap_times[-1] / 1000
                     timer_text = FONT.render(f"Car {i+1} Last Lap: {last_time:.2f}s", True, (255, 255, 255))
                     SCREEN.blit(timer_text, (10, 10 + i * 30))
-
-        # Draw control bars for the first car on the right top
-        if cars:
-            car = cars[0].sprite
-            bar_x = SCREEN_WIDTH - 120
-            bar_y1 = 10
-            bar_y2 = bar_y1 + 30
-            bar_y3 = bar_y2 + 30
-            bar_y4 = bar_y3 + 30
-            draw_bar(SCREEN, bar_x, bar_y1, 100, 20, car.steer_left, "Steer Left")
-            draw_bar(SCREEN, bar_x, bar_y2, 100, 20, car.steer_right, "Steer Right")
-            draw_bar(SCREEN, bar_x, bar_y3, 100, 20, car.brake, "Brake")
-            draw_bar(SCREEN, bar_x, bar_y4, 100, 20, car.accelerator, "Accelerator")
 
         pygame.display.update()
         clock.tick(60)
