@@ -2,6 +2,8 @@ import pygame
 import os
 import math
 import neat
+import threading
+import time
 
 pygame.init()
 
@@ -18,10 +20,55 @@ scale_x = SCREEN_WIDTH / original_width
 scale_y = SCREEN_HEIGHT / original_height
 scale = min(scale_x, scale_y)  # Use minimum scale to avoid distortion in distances
 
-# Add font for timer display
-FONT = pygame.font.SysFont(None, 24)
+# Add font for timer display (scale font size to screen)
+FONT = pygame.font.SysFont(None, int(24 * scale))
 
 quit_flag = False
+
+# Exit button setup (drawn on TRACK so it appears every frame)
+BUTTON_PADDING = int(20 * scale)
+BUTTON_WIDTH = int(140 * scale)
+BUTTON_HEIGHT = int(48 * scale)
+EXIT_BUTTON_RECT = pygame.Rect(SCREEN_WIDTH - BUTTON_PADDING - BUTTON_WIDTH, BUTTON_PADDING, BUTTON_WIDTH, BUTTON_HEIGHT)
+EXIT_BUTTON_COLOR = (200, 0, 0)
+EXIT_BUTTON_BORDER_COLOR = (255, 255, 255)
+EXIT_BUTTON_TEXT_COLOR = (255, 255, 255)
+
+def draw_exit_button(surface):
+    # Draw background rect and border onto provided surface (TRACK)
+    pygame.draw.rect(surface, EXIT_BUTTON_COLOR, EXIT_BUTTON_RECT)
+    pygame.draw.rect(surface, EXIT_BUTTON_BORDER_COLOR, EXIT_BUTTON_RECT, max(1, int(2 * scale)))
+    label = FONT.render("Exit", True, EXIT_BUTTON_TEXT_COLOR)
+    label_rect = label.get_rect(center=EXIT_BUTTON_RECT.center)
+    surface.blit(label, label_rect)
+
+# Draw button once on TRACK (it will be part of the background each frame)
+draw_exit_button(TRACK)
+
+
+def _monitor_exit_button_thread():
+    """Background thread: watches for left mouse clicks inside the exit button rect and posts a QUIT event."""
+    pressed = False
+    while True:
+        # If main loop requested stop, exit thread
+        if quit_flag:
+            break
+
+        mouse_pressed = pygame.mouse.get_pressed(num_buttons=3)
+        if mouse_pressed[0]:
+            if not pressed:
+                pressed = True
+                mx, my = pygame.mouse.get_pos()
+                if EXIT_BUTTON_RECT.collidepoint(mx, my):
+                    # Post a QUIT event - main loop will pick this up and set quit_flag
+                    pygame.event.post(pygame.event.Event(pygame.QUIT))
+        else:
+            pressed = False
+
+        time.sleep(0.05)
+
+# Start the thread to monitor clicks on the exit button
+threading.Thread(target=_monitor_exit_button_thread, daemon=True).start()
 
 class Car(pygame.sprite.Sprite):
     def __init__(self):
