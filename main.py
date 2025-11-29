@@ -125,6 +125,7 @@ class Car(pygame.sprite.Sprite):
         self.lap_times = []
         self.personal_best = float('inf')
         self.speed = 6
+        self.max_speed = 20 
         self.steer_left = 0
         self.steer_right = 0
         self.brake = 0
@@ -133,6 +134,7 @@ class Car(pygame.sprite.Sprite):
         self.last_pos = pygame.math.Vector2(self.rect.center)
         self.stuck_frames = 0
         self.steer = 0.0   
+        self.distance_travelled = 0.0
 
 
     def update(self):
@@ -171,10 +173,12 @@ class Car(pygame.sprite.Sprite):
         self.speed *= 0.99
 
         # Clamp
-        self.speed = max(0, min(20, self.speed))
+        self.speed = max(0, min(self.max_speed, self.speed))
 
         self.rect.center += self.vel_vector * self.speed
-
+        
+        # Track progress
+        self.distance_travelled += self.speed   
 
     def check_lap(self):
         global BEST_OVERALL_LAP
@@ -199,11 +203,15 @@ class Car(pygame.sprite.Sprite):
                 if final_time < BEST_OVERALL_LAP:
                     BEST_OVERALL_LAP = final_time
                 
-                self.speed += 1
+                # Small reward: higher potential top speed + a little shove
+                self.max_speed = min(self.max_speed + 2, 30)   # don’t go crazy, cap at 30
+                self.speed = min(self.speed + 2, self.max_speed)
+
                 self.lap_started = False
                 self.lap_completed = False
                 self.lap_start_time = 0
                 self.current_lap_time = 0
+
 
     def collision(self):
         length = 40 * self.scale
@@ -418,7 +426,7 @@ def eval_genomes(genomes, config):
     start_time = pygame.time.get_ticks()
     run = True
     
-    while run and not any(car_group.sprite.lap_completed for car_group in cars) and (pygame.time.get_ticks() - start_time) < 360000:
+    while run and (pygame.time.get_ticks() - start_time) <360000:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 quit_flag = True
@@ -479,8 +487,8 @@ def eval_genomes(genomes, config):
             # Update physics etc.
             car.update()
 
-            # ⚠️ NEW: reward moving fast, not just existing
-            genomes[i][1].fitness += car.speed * 0.1
+            # Reward forward movement, not just surviving
+            genomes[i][1].fitness += car.speed * 0.01
 
             car_group.draw(SCREEN)
 
@@ -488,10 +496,21 @@ def eval_genomes(genomes, config):
         # Reward Logic
         for i, car_group in enumerate(cars):
             car = car_group.sprite
+            genome = genomes[i][1]
+
             if car.lap_completed and car.lap_times:
-                last_lap = car.lap_times[-1]
-                genomes[i][1].fitness += max(0, 10000 - last_lap)
+                last_lap = car.lap_times[-1]      # in ms
+                lap_seconds = last_lap / 1000.0
+
+                # Fast lap = big reward, slow lap = weak reward
+                lap_bonus = 5000.0 / max(lap_seconds, 0.1)
+
+                genome.fitness += lap_bonus
+
+                # Stop the car once it completes the lap (prevents farming)
                 car.lap_completed = False
+                car.alive = False
+
 
 
         # 4. Draw HUD Overlays
