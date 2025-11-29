@@ -130,6 +130,7 @@ class Car(pygame.sprite.Sprite):
         self.brake = 0
         self.accelerator = 0
         self.scale = scale
+        self.last_pos = pygame.math.Vector2(self.rect.center)
         self.stuck_frames = 0
         self.steer = 0.0   
 
@@ -142,23 +143,38 @@ class Car(pygame.sprite.Sprite):
         for radar_angle in (-60, -30, 0, 30, 60):
             self.radar(radar_angle)
         self.collision()
-        # After drive() / movement
-        if self.speed < 1:
+
+        # --- Anti-stuck based on actual movement ---
+        current_pos = pygame.math.Vector2(self.rect.center)
+        moved_dist = (current_pos - self.last_pos).length()
+
+        if moved_dist < 1.0:        # basically not moving
             self.stuck_frames += 1
         else:
             self.stuck_frames = 0
 
+        self.last_pos = current_pos
+
         # If stuck for more than 3 seconds at 60 FPS, kill the car
         if self.stuck_frames > 180:
             self.alive = False
+        # -------------------------------------------
 
         self.data()
-        
+
 
     def drive(self):
+        # Apply throttle / brake
         self.speed += (self.accelerator - self.brake) * 0.1
+
+        # Simple friction
+        self.speed *= 0.99
+
+        # Clamp
         self.speed = max(0, min(20, self.speed))
+
         self.rect.center += self.vel_vector * self.speed
+
 
     def check_lap(self):
         global BEST_OVERALL_LAP
