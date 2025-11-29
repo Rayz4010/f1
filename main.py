@@ -130,6 +130,9 @@ class Car(pygame.sprite.Sprite):
         self.brake = 0
         self.accelerator = 0
         self.scale = scale
+        self.stuck_frames = 0
+        self.steer = 0.0   
+
 
     def update(self):
         self.radars.clear()
@@ -139,7 +142,18 @@ class Car(pygame.sprite.Sprite):
         for radar_angle in (-60, -30, 0, 30, 60):
             self.radar(radar_angle)
         self.collision()
+        # After drive() / movement
+        if self.speed < 1:
+            self.stuck_frames += 1
+        else:
+            self.stuck_frames = 0
+
+        # If stuck for more than 3 seconds at 60 FPS, kill the car
+        if self.stuck_frames > 180:
+            self.alive = False
+
         self.data()
+        
 
     def drive(self):
         self.speed += (self.accelerator - self.brake) * 0.1
@@ -331,36 +345,41 @@ def draw_telemetry_panel(screen, cars):
         bar_height = 6 * scale
         
         if car.alive:
-            # Accelerator (Green)
-            accel_width = max(0, min(1, car.accelerator)) * bar_max_width
+            # Accelerator bar (green)
+            accel_val = max(0, min(1, car.accelerator))
+            accel_width = accel_val * bar_max_width
             pygame.draw.rect(screen, (0, 80, 0), (telemetry_x, y_pos + 8 * scale, bar_max_width, bar_height), 1)
-            pygame.draw.rect(screen, COLOR_GREEN, (telemetry_x, y_pos + 8 * scale, accel_width, bar_height)) 
+            pygame.draw.rect(screen, COLOR_GREEN, (telemetry_x, y_pos + 8 * scale, accel_width, bar_height))
 
-            # Brake (Red)
+            # Brake bar (red)
             brake_x = telemetry_x + bar_max_width + 4 * scale
-            brake_width = max(0, min(1, car.brake)) * bar_max_width
+            brake_val = max(0, min(1, car.brake))
+            brake_width = brake_val * bar_max_width
             pygame.draw.rect(screen, (80, 0, 0), (brake_x, y_pos + 8 * scale, bar_max_width, bar_height), 1)
             pygame.draw.rect(screen, COLOR_RED, (brake_x, y_pos + 8 * scale, brake_width, bar_height))
 
-            # Steering (Blue)
+            # Steering bar (blue, centered)
             steer_y = y_pos + 18 * scale
             total_steer_width = (bar_max_width * 2) + 4 * scale
             center_x = telemetry_x + (total_steer_width / 2)
-            
-            # Steering Background Line
-            pygame.draw.line(screen, (100, 100, 100), (telemetry_x, steer_y + bar_height/2), (telemetry_x + total_steer_width, steer_y + bar_height/2), 1)
-            pygame.draw.line(screen, (200, 200, 200), (center_x, steer_y), (center_x, steer_y + bar_height), 1)
-            
-            steer_val = car.steer_right - car.steer_left
-            steer_bar_w = steer_val * (total_steer_width / 2)
-            
-            if steer_bar_w > 0: # Turning Right
-                pygame.draw.rect(screen, COLOR_BLUE, (center_x, steer_y, steer_bar_w, bar_height))
-            else: # Turning Left
-                pygame.draw.rect(screen, COLOR_BLUE, (center_x + steer_bar_w, steer_y, abs(steer_bar_w), bar_height))
+
+            # Neutral reference marks
+            pygame.draw.line(screen, (100,100,100), (telemetry_x, steer_y + bar_height/2), (telemetry_x + total_steer_width, steer_y + bar_height/2), 1)
+            pygame.draw.line(screen, (200,200,200), (center_x, steer_y), (center_x, steer_y + bar_height), 1)
+
+            # Steering fill based on new unified steering value
+            steer = max(-1, min(1, car.steer))
+            steer_pixels = steer * (total_steer_width / 2)
+
+            if steer_pixels > 0:    # turning right
+                pygame.draw.rect(screen, COLOR_BLUE, (center_x, steer_y, steer_pixels, bar_height))
+            else:                   # turning left
+                pygame.draw.rect(screen, COLOR_BLUE, (center_x + steer_pixels, steer_y, abs(steer_pixels), bar_height))
         else:
-            # Greyed out slots
-            pygame.draw.rect(screen, (40, 40, 40), (telemetry_x, y_pos + 8 * scale, bar_max_width * 2 + 4 * scale, bar_height * 2 + 4 * scale), 1)
+            # Greyed out bars for dead cars
+            pygame.draw.rect(screen, COLOR_TEXT_GREY, (telemetry_x, y_pos + 8 * scale, bar_max_width, bar_height), 1)
+            pygame.draw.rect(screen, COLOR_TEXT_GREY, (telemetry_x + bar_max_width + 4 * scale, y_pos + 8 * scale, bar_max_width, bar_height), 1)
+            pygame.draw.rect(screen, COLOR_TEXT_GREY, (telemetry_x, y_pos + 18 * scale, (bar_max_width * 2) + 4 * scale, bar_height), 1)
 
 
 def eval_genomes(genomes, config):
@@ -401,27 +420,63 @@ def eval_genomes(genomes, config):
         # 3. Update & Draw Cars
         for i, car_group in enumerate(cars):
             car = car_group.sprite
-            if car.alive:
-                output = nets[i].activate(car.data())
-                car.steer_left = output[0] if len(output) > 0 else 0
-                car.steer_right = output[1] if len(output) > 1 else 0
-                car.brake = output[2] if len(output) > 2 else 0
-                car.accelerator = output[3] if len(output) > 3 else 0
-                
-                if car.steer_left > 0.7: car.direction = 1
-                elif car.steer_right > 0.7: car.direction = -1
-                else: car.direction = 0
-                
-                car.update()
-                genomes[i][1].fitness += 1
-                car_group.draw(SCREEN)
+            if not car.alive:
+                continue
+
+            raw = nets[i].activate(car.data())
+            # Make sure we have 4 outputs
+            while len(raw) < 4:
+                raw = list(raw) + [0.0]
+
+            # Steering (left/right decision)
+            # Steering (left/right decision)
+            car.steer_left  = raw[0]
+            car.steer_right = raw[1]
+
+            # Combine into a single steering value: right - left
+            steer = car.steer_right - car.steer_left
+
+            # Deadzone so tiny jitters don't show as full steering
+            if abs(steer) < 0.2:
+                steer = 0.0
+
+            # Clamp to [-1, 1] and store
+            car.steer = max(-1.0, min(1.0, steer))
+
+
+            # Pedals: tanh [-1,1] -> [0,1]
+            car.brake       = (raw[2] + 1) / 2.0
+            car.accelerator = (raw[3] + 1) / 2.0
+
+            # Clamp
+            car.brake       = max(0.0, min(1.0, car.brake))
+            car.accelerator = max(0.0, min(1.0, car.accelerator))
+
+            # Turn based on strong signal
+            if car.steer_left > 0.7:
+                car.direction = 1
+            elif car.steer_right > 0.7:
+                car.direction = -1
+            else:
+                car.direction = 0
+
+            # Update physics etc.
+            car.update()
+
+            # ⚠️ NEW: reward moving fast, not just existing
+            genomes[i][1].fitness += car.speed * 0.1
+
+            car_group.draw(SCREEN)
+
 
         # Reward Logic
         for i, car_group in enumerate(cars):
             car = car_group.sprite
-            if car.lap_completed:
-                genomes[i][1].fitness += 10000 - car.lap_time
+            if car.lap_completed and car.lap_times:
+                last_lap = car.lap_times[-1]
+                genomes[i][1].fitness += max(0, 10000 - last_lap)
                 car.lap_completed = False
+
 
         # 4. Draw HUD Overlays
         draw_f1_leaderboard(SCREEN, cars)
