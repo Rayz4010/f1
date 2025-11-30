@@ -20,7 +20,14 @@ UI_WIDTH = int(SCREEN_WIDTH * UI_PERCENTAGE)
 GAME_WIDTH = SCREEN_WIDTH - UI_WIDTH
 TRACK_X_OFFSET = UI_WIDTH  # Track starts after the UI panel (Left side UI, Right side Track)
 
-TRACK = pygame.image.load(os.path.join("assets", "track.png"))
+# Load Assets
+try:
+    TRACK = pygame.image.load(os.path.join("assets", "track.png"))
+except FileNotFoundError:
+    print("Error: assets/track.png not found. Please ensure the file exists.")
+    pygame.quit()
+    exit()
+
 original_width, original_height = TRACK.get_width(), TRACK.get_height()
 
 # Scale Track to fit the GAME_WIDTH only
@@ -32,32 +39,45 @@ scale = min(scale_x, scale_y)
 
 # F1 Style Fonts
 try:
-    FONT_MAIN = pygame.font.SysFont("Consolas", int(18 * scale), bold=True) # Slightly smaller for more info
+    FONT_MAIN = pygame.font.SysFont("Consolas", int(18 * scale), bold=True)
     FONT_HEADER = pygame.font.SysFont("Arial", int(20 * scale), bold=True)
 except:
     FONT_MAIN = pygame.font.SysFont(None, int(22 * scale))
     FONT_HEADER = pygame.font.SysFont(None, int(24 * scale))
 
 quit_flag = False
+manual_reset = False  # Flag to trigger next generation manually
 show_telemetry = False  # Default to hidden, toggle with 'I'
 
-# Exit button setup - Positioned at the top right of the screen
+# --- BUTTONS CONFIGURATION ---
 BUTTON_PADDING = int(20 * scale)
 BUTTON_WIDTH = int(140 * scale)
 BUTTON_HEIGHT = int(48 * scale)
-# Top Right positioning
+
+# Exit Button (Top Right)
 EXIT_BUTTON_RECT = pygame.Rect(
     SCREEN_WIDTH - BUTTON_WIDTH - BUTTON_PADDING, 
     BUTTON_PADDING, 
     BUTTON_WIDTH, 
     BUTTON_HEIGHT
 )
-EXIT_BUTTON_COLOR = (200, 0, 0)
-EXIT_BUTTON_BORDER_COLOR = (255, 255, 255)
-EXIT_BUTTON_TEXT_COLOR = (255, 255, 255)
 
-# F1 Colors
-COLOR_UI_BG = (30, 30, 30)     # Solid dark grey for the UI panel
+# Reset Button (Left of Exit Button)
+RESET_BUTTON_RECT = pygame.Rect(
+    SCREEN_WIDTH - (BUTTON_WIDTH * 2) - (BUTTON_PADDING * 2), 
+    BUTTON_PADDING, 
+    BUTTON_WIDTH, 
+    BUTTON_HEIGHT
+)
+
+# Colors
+EXIT_BUTTON_COLOR = (200, 0, 0)
+RESET_BUTTON_COLOR = (255, 140, 0) # Dark Orange
+EXIT_BUTTON_BORDER_COLOR = (255, 255, 255)
+BUTTON_TEXT_COLOR = (255, 255, 255)
+
+# F1 Theme Colors
+COLOR_UI_BG = (30, 30, 30)     
 COLOR_BG_PANEL = (20, 20, 20, 200) 
 COLOR_TEXT_WHITE = (255, 255, 255)
 COLOR_TEXT_GREY = (150, 150, 150)
@@ -76,14 +96,25 @@ def format_time(ms):
     milliseconds = int(ms % 1000)
     return f"{minutes}:{seconds:02}.{milliseconds:03}"
 
-def draw_exit_button(surface):
+def draw_ui_buttons(surface):
+    """Draws both Exit and Reset buttons"""
+    # 1. Exit Button
     pygame.draw.rect(surface, EXIT_BUTTON_COLOR, EXIT_BUTTON_RECT)
     pygame.draw.rect(surface, EXIT_BUTTON_BORDER_COLOR, EXIT_BUTTON_RECT, max(1, int(2 * scale)))
-    label = FONT_MAIN.render("Exit", True, EXIT_BUTTON_TEXT_COLOR)
-    label_rect = label.get_rect(center=EXIT_BUTTON_RECT.center)
-    surface.blit(label, label_rect)
+    label_exit = FONT_MAIN.render("Exit", True, BUTTON_TEXT_COLOR)
+    label_rect_exit = label_exit.get_rect(center=EXIT_BUTTON_RECT.center)
+    surface.blit(label_exit, label_rect_exit)
 
-def _monitor_exit_button_thread():
+    # 2. Reset Gen Button
+    pygame.draw.rect(surface, RESET_BUTTON_COLOR, RESET_BUTTON_RECT)
+    pygame.draw.rect(surface, EXIT_BUTTON_BORDER_COLOR, RESET_BUTTON_RECT, max(1, int(2 * scale)))
+    label_reset = FONT_MAIN.render("Reset Gen", True, BUTTON_TEXT_COLOR)
+    label_rect_reset = label_reset.get_rect(center=RESET_BUTTON_RECT.center)
+    surface.blit(label_reset, label_rect_reset)
+
+def _monitor_buttons_thread():
+    """Thread to handle button clicks (Exit and Reset)"""
+    global manual_reset, quit_flag
     pressed = False
     while True:
         if quit_flag:
@@ -93,19 +124,31 @@ def _monitor_exit_button_thread():
             if not pressed:
                 pressed = True
                 mx, my = pygame.mouse.get_pos()
+                
+                # Check Exit
                 if EXIT_BUTTON_RECT.collidepoint(mx, my):
                     pygame.event.post(pygame.event.Event(pygame.QUIT))
+                
+                # Check Reset
+                if RESET_BUTTON_RECT.collidepoint(mx, my):
+                    manual_reset = True
         else:
             pressed = False
         time.sleep(0.05)
 
-threading.Thread(target=_monitor_exit_button_thread, daemon=True).start()
+threading.Thread(target=_monitor_buttons_thread, daemon=True).start()
 
 class Car(pygame.sprite.Sprite):
     def __init__(self, car_id):
         super().__init__()
         self.car_id = car_id
-        self.original_image = pygame.image.load(os.path.join("assets", "car.png"))
+        try:
+            self.original_image = pygame.image.load(os.path.join("assets", "car.png"))
+        except FileNotFoundError:
+             # Fallback if car.png is missing: simple red rect
+            self.original_image = pygame.Surface((30, 50))
+            self.original_image.fill((255, 0, 0))
+
         car_scale = scale * 0.2
         self.original_image = pygame.transform.scale(self.original_image, (int(self.original_image.get_width() * car_scale), int(self.original_image.get_height() * car_scale)))
         self.image = self.original_image
@@ -145,6 +188,12 @@ class Car(pygame.sprite.Sprite):
         for radar_angle in (-60, -30, 0, 30, 60):
             self.radar(radar_angle)
         self.collision()
+        
+        # --- NEW: Anti-Spinning Logic ---
+        # If the car is moving fast but turning excessively without making progress
+        if self.speed > 2 and abs(self.steer) > 0.9:
+            # You can add a counter here, if they do this for 50 frames, kill them
+            pass
 
         # --- Anti-stuck based on actual movement ---
         current_pos = pygame.math.Vector2(self.rect.center)
@@ -241,9 +290,8 @@ class Car(pygame.sprite.Sprite):
         x = int(self.rect.center[0])
         y = int(self.rect.center[1])
 
-        while length < 200 * self.scale:
+        while length < 300 * self.scale:
             # Important: Limit radar check to TRACK Area (Right Side)
-            # x must be greater than TRACK_X_OFFSET and less than SCREEN_WIDTH
             if not (TRACK_X_OFFSET <= x < SCREEN_WIDTH and 0 <= y < SCREEN_HEIGHT):
                 break
             
@@ -251,14 +299,12 @@ class Car(pygame.sprite.Sprite):
                 if SCREEN.get_at((x, y)) == pygame.Color(2, 105, 31, 255):
                     break
             except IndexError:
-                # Safety catch if coordinates are out of bounds
                 break
 
             length += 1
             x = int(self.rect.center[0] + math.cos(math.radians(self.angle + radar_angle)) * length)
             y = int(self.rect.center[1] - math.sin(math.radians(self.angle + radar_angle)) * length)
 
-        # Draw Radar
         pygame.draw.line(SCREEN, (255, 255, 255, 255), self.rect.center, (x, y), 1)
         pygame.draw.circle(SCREEN, (0, 255, 0, 0), (x, y), 3)
 
@@ -273,7 +319,6 @@ class Car(pygame.sprite.Sprite):
         return input
 
 def draw_f1_leaderboard(screen, cars):
-    # Dimensions for the timing tower (fill the UI Width on the LEFT)
     start_x = 0
     start_y = 0
     row_height = 40 * scale
@@ -284,12 +329,10 @@ def draw_f1_leaderboard(screen, cars):
     header_text = FONT_HEADER.render("POS  DRIVER             TIME", True, COLOR_TEXT_WHITE)
     screen.blit(header_text, (start_x + 10, start_y + 10))
     
-    # Draw Rows
     for i, car_group in enumerate(cars):
         car = car_group.sprite
         y_pos = start_y + row_height + (i * row_height)
         
-        # Color Logic
         text_color = COLOR_TEXT_WHITE
         time_text = ""
         
@@ -308,50 +351,43 @@ def draw_f1_leaderboard(screen, cars):
                 time_text = format_time(car.current_lap_time)
                 text_color = (255, 255, 200)
         
-        # Separator Line
         pygame.draw.line(screen, (50, 50, 50), (start_x, y_pos), (UI_WIDTH, y_pos), 1)
         
-        # 1. Position
+        # Position
         pos_str = f"{i+1}"
         pos_render = FONT_MAIN.render(pos_str, True, text_color)
         screen.blit(pos_render, (start_x + 10, y_pos + 10))
         
-        # 2. Driver Name
+        # Driver Name
         driver_str = f"CAR {car.car_id}"
         driver_render = FONT_MAIN.render(driver_str, True, text_color)
         screen.blit(driver_render, (start_x + 50, y_pos + 10))
 
-        # 3. Time (Adjusted position back to standard layout since bars are gone)
+        # Time
         time_render = FONT_MAIN.render(time_text, True, text_color)
         time_rect = time_render.get_rect(right=UI_WIDTH - 20, top=y_pos + 10)
         screen.blit(time_render, time_rect)
 
 def draw_telemetry_panel(screen, cars):
-    # Panel Configuration
     panel_width = 230 * scale
     row_height = 30 * scale
     header_height = 30 * scale
     
-    # Calculate Total Height needed (Clamp to screen height if too many cars)
     needed_height = (len(cars) * row_height) + header_height + 10
     total_height = min(needed_height, SCREEN_HEIGHT - 50)
     
-    # Bottom Right Position
     start_x = SCREEN_WIDTH - panel_width - 20
     start_y = SCREEN_HEIGHT - total_height - 20
     
-    # Draw Background Panel
     s = pygame.Surface((panel_width, total_height))
     s.set_alpha(220)
     s.fill((20, 20, 20))
     screen.blit(s, (start_x, start_y))
     
-    # Header
     pygame.draw.rect(screen, (200, 0, 0), (start_x, start_y, panel_width, header_height))
     header_text = FONT_MAIN.render("LIVE TELEMETRY", True, COLOR_TEXT_WHITE)
     screen.blit(header_text, (start_x + 10, start_y + 5))
     
-    # Scroll offset if too many cars (simplified: just cut off for now or fit what we can)
     visible_cars = int((total_height - header_height - 10) / row_height)
     
     for i in range(min(len(cars), visible_cars)):
@@ -359,39 +395,35 @@ def draw_telemetry_panel(screen, cars):
         car = car_group.sprite
         y_pos = start_y + header_height + (i * row_height) + 5
         
-        # Car ID
         id_text = FONT_MAIN.render(f"{car.car_id}", True, COLOR_TEXT_WHITE if car.alive else COLOR_TEXT_GREY)
         screen.blit(id_text, (start_x + 10, y_pos))
         
-        # Telemetry Bars
         telemetry_x = start_x + 50 * scale 
         bar_max_width = 35 * scale
         bar_height = 6 * scale
         
         if car.alive:
-            # Accelerator bar (green)
+            # Accelerator
             accel_val = max(0, min(1, car.accelerator))
             accel_width = accel_val * bar_max_width
             pygame.draw.rect(screen, (0, 80, 0), (telemetry_x, y_pos + 8 * scale, bar_max_width, bar_height), 1)
             pygame.draw.rect(screen, COLOR_GREEN, (telemetry_x, y_pos + 8 * scale, accel_width, bar_height))
 
-            # Brake bar (red)
+            # Brake
             brake_x = telemetry_x + bar_max_width + 4 * scale
             brake_val = max(0, min(1, car.brake))
             brake_width = brake_val * bar_max_width
             pygame.draw.rect(screen, (80, 0, 0), (brake_x, y_pos + 8 * scale, bar_max_width, bar_height), 1)
             pygame.draw.rect(screen, COLOR_RED, (brake_x, y_pos + 8 * scale, brake_width, bar_height))
 
-            # Steering bar (blue, centered)
+            # Steering
             steer_y = y_pos + 18 * scale
             total_steer_width = (bar_max_width * 2) + 4 * scale
             center_x = telemetry_x + (total_steer_width / 2)
 
-            # Neutral reference marks
             pygame.draw.line(screen, (100,100,100), (telemetry_x, steer_y + bar_height/2), (telemetry_x + total_steer_width, steer_y + bar_height/2), 1)
             pygame.draw.line(screen, (200,200,200), (center_x, steer_y), (center_x, steer_y + bar_height), 1)
 
-            # Steering fill based on new unified steering value
             steer = max(-1, min(1, car.steer))
             steer_pixels = steer * (total_steer_width / 2)
 
@@ -400,14 +432,17 @@ def draw_telemetry_panel(screen, cars):
             else:                   # turning left
                 pygame.draw.rect(screen, COLOR_BLUE, (center_x + steer_pixels, steer_y, abs(steer_pixels), bar_height))
         else:
-            # Greyed out bars for dead cars
             pygame.draw.rect(screen, COLOR_TEXT_GREY, (telemetry_x, y_pos + 8 * scale, bar_max_width, bar_height), 1)
             pygame.draw.rect(screen, COLOR_TEXT_GREY, (telemetry_x + bar_max_width + 4 * scale, y_pos + 8 * scale, bar_max_width, bar_height), 1)
             pygame.draw.rect(screen, COLOR_TEXT_GREY, (telemetry_x, y_pos + 18 * scale, (bar_max_width * 2) + 4 * scale, bar_height), 1)
 
 
 def eval_genomes(genomes, config):
-    global quit_flag, BEST_OVERALL_LAP, show_telemetry
+    global quit_flag, BEST_OVERALL_LAP, show_telemetry, manual_reset
+    
+    # IMPORTANT: Reset flag at start of each generation
+    manual_reset = False 
+    
     cars = []
     nets = []
     
@@ -426,7 +461,13 @@ def eval_genomes(genomes, config):
     start_time = pygame.time.get_ticks()
     run = True
     
-    while run and (pygame.time.get_ticks() - start_time) <360000:
+    while run and (pygame.time.get_ticks() - start_time) < 360000:
+        
+        # --- RESET CHECK ---
+        if manual_reset:
+            run = False
+        # -------------------
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 quit_flag = True
@@ -435,48 +476,35 @@ def eval_genomes(genomes, config):
                 if event.key == pygame.K_i:
                     show_telemetry = not show_telemetry
 
-        # 1. Draw Track (Right Side)
+        # 1. Draw Track & UI BG
         SCREEN.blit(TRACK, (TRACK_X_OFFSET, 0))
-        
-        # 2. Draw UI Background (Left Side)
         pygame.draw.rect(SCREEN, COLOR_UI_BG, (0, 0, UI_WIDTH, SCREEN_HEIGHT))
 
-        # 3. Update & Draw Cars
+        # 2. Update Cars
         for i, car_group in enumerate(cars):
             car = car_group.sprite
             if not car.alive:
                 continue
 
             raw = nets[i].activate(car.data())
-            # Make sure we have 4 outputs
             while len(raw) < 4:
                 raw = list(raw) + [0.0]
 
-            # Steering (left/right decision)
-            # Steering (left/right decision)
             car.steer_left  = raw[0]
             car.steer_right = raw[1]
-
-            # Combine into a single steering value: right - left
             steer = car.steer_right - car.steer_left
 
-            # Deadzone so tiny jitters don't show as full steering
             if abs(steer) < 0.2:
                 steer = 0.0
 
-            # Clamp to [-1, 1] and store
             car.steer = max(-1.0, min(1.0, steer))
 
-
-            # Pedals: tanh [-1,1] -> [0,1]
             car.brake       = (raw[2] + 1) / 2.0
             car.accelerator = (raw[3] + 1) / 2.0
 
-            # Clamp
             car.brake       = max(0.0, min(1.0, car.brake))
             car.accelerator = max(0.0, min(1.0, car.accelerator))
 
-            # Turn based on strong signal
             if car.steer_left > 0.7:
                 car.direction = 1
             elif car.steer_right > 0.7:
@@ -484,14 +512,17 @@ def eval_genomes(genomes, config):
             else:
                 car.direction = 0
 
-            # Update physics etc.
             car.update()
 
-            # Reward forward movement, not just surviving
-            genomes[i][1].fitness += car.speed * 0.01
+            # 1. Reward distance heavily so "almost finishing" is good
+            genomes[i][1].fitness += car.speed * 0.1 
+            
+            # 2. Small constant reward for staying alive (encourages not crashing immediately)
+            genomes[i][1].fitness += 0.05
 
             car_group.draw(SCREEN)
-
+            
+            
 
         # Reward Logic
         for i, car_group in enumerate(cars):
@@ -499,25 +530,36 @@ def eval_genomes(genomes, config):
             genome = genomes[i][1]
 
             if car.lap_completed and car.lap_times:
-                last_lap = car.lap_times[-1]      # in ms
+                last_lap = car.lap_times[-1]      
                 lap_seconds = last_lap / 1000.0
 
-                # Fast lap = big reward, slow lap = weak reward
-                lap_bonus = 5000.0 / max(lap_seconds, 0.1)
+                # OLD BONUS: 5000 (Too high, creates "God" cars)
+                # NEW BONUS: 1000 + speed incentive
+                
+                # Give a flat bonus for finishing + bonus for speed
+                lap_bonus = 1000.0 
+                
+                # Extra bonus for doing it fast
+                if lap_seconds < 30: # Arbitrary "fast" time
+                    lap_bonus += 500 
 
                 genome.fitness += lap_bonus
 
-                # Stop the car once it completes the lap (prevents farming)
+                # Instead of killing the car, let it keep driving to learn consistency!
+                # car.alive = False 
+                
+                # Reset lap flags to let it try for a second lap (Consistency training)
                 car.lap_completed = False
-                car.alive = False
-
-
-
-        # 4. Draw HUD Overlays
+                # Optionally increase speed cap slightly to let it push limits
+                car.max_speed = min(car.max_speed + 1, 25)
+                
+                
+        # 3. Draw HUD Overlays
         draw_f1_leaderboard(SCREEN, cars)
         if show_telemetry:
             draw_telemetry_panel(SCREEN, cars)
-        draw_exit_button(SCREEN)
+        
+        draw_ui_buttons(SCREEN) # Draws both Exit and Reset
 
         pygame.display.update()
         clock.tick(60)
