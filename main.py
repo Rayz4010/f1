@@ -49,7 +49,7 @@ quit_flag = False
 manual_reset = False  # Flag to trigger next generation manually
 show_telemetry = False  # Default to hidden, toggle with 'I'
 
-# --- BUTTONS CONFIGURATION ---
+# BUTTONS CONFIGURATION
 BUTTON_PADDING = int(20 * scale)
 BUTTON_WIDTH = int(140 * scale)
 BUTTON_HEIGHT = int(48 * scale)
@@ -72,7 +72,7 @@ RESET_BUTTON_RECT = pygame.Rect(
 
 # Colors
 EXIT_BUTTON_COLOR = (200, 0, 0)
-RESET_BUTTON_COLOR = (255, 140, 0) # Dark Orange
+RESET_BUTTON_COLOR = (255, 140, 0) 
 EXIT_BUTTON_BORDER_COLOR = (255, 255, 255)
 BUTTON_TEXT_COLOR = (255, 255, 255)
 
@@ -108,7 +108,7 @@ def draw_ui_buttons(surface):
     # 2. Reset Gen Button
     pygame.draw.rect(surface, RESET_BUTTON_COLOR, RESET_BUTTON_RECT)
     pygame.draw.rect(surface, EXIT_BUTTON_BORDER_COLOR, RESET_BUTTON_RECT, max(1, int(2 * scale)))
-    label_reset = FONT_MAIN.render("Reset Gen", True, BUTTON_TEXT_COLOR)
+    label_reset = FONT_MAIN.render("New Gen", True, BUTTON_TEXT_COLOR)
     label_rect_reset = label_reset.get_rect(center=RESET_BUTTON_RECT.center)
     surface.blit(label_reset, label_rect_reset)
 
