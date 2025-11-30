@@ -322,43 +322,49 @@ def draw_f1_leaderboard(screen, cars):
     start_x = 0
     start_y = 0
     row_height = 40 * scale
-    
+
+    # 1. Filter: Create a list of ONLY alive cars
+    #    'cars' is a list of sprite groups, so we access .sprite to get the car object
+    active_cars = [group.sprite for group in cars if group.sprite.alive]
+
+    # 2. Sort: Order them by distance travelled (Highest first)
+    #    This makes "POS 1" actually the car that is winning
+    active_cars.sort(key=lambda x: x.distance_travelled, reverse=True)
+
     # Header
     header_rect = pygame.Rect(start_x, start_y, UI_WIDTH, row_height)
     pygame.draw.rect(screen, (255, 0, 0), header_rect)
     header_text = FONT_HEADER.render("POS  DRIVER             TIME", True, COLOR_TEXT_WHITE)
     screen.blit(header_text, (start_x + 10, start_y + 10))
-    
-    for i, car_group in enumerate(cars):
-        car = car_group.sprite
+
+    # 3. Draw only the active cars
+    for i, car in enumerate(active_cars):
         y_pos = start_y + row_height + (i * row_height)
-        
+
         text_color = COLOR_TEXT_WHITE
         time_text = ""
-        
-        if not car.alive:
-            text_color = COLOR_TEXT_GREY
-            time_text = "DNF"
+
+        # Logic for Time Display
+        if len(car.lap_times) > 0:
+            last_lap = car.lap_times[-1]
+            time_text = format_time(last_lap)
+            if last_lap == BEST_OVERALL_LAP:
+                text_color = COLOR_PURPLE
+            elif last_lap == car.personal_best:
+                text_color = COLOR_GREEN
         else:
-            if len(car.lap_times) > 0:
-                last_lap = car.lap_times[-1]
-                time_text = format_time(last_lap)
-                if last_lap == BEST_OVERALL_LAP:
-                    text_color = COLOR_PURPLE
-                elif last_lap == car.personal_best:
-                    text_color = COLOR_GREEN
-            else:
-                time_text = format_time(car.current_lap_time)
-                text_color = (255, 255, 200)
-        
+            time_text = format_time(car.current_lap_time)
+            text_color = (255, 255, 200)
+
+        # Draw Separator Line
         pygame.draw.line(screen, (50, 50, 50), (start_x, y_pos), (UI_WIDTH, y_pos), 1)
-        
-        # Position
-        pos_str = f"{i+1}"
+
+        # Position (1, 2, 3...)
+        pos_str = f"{i + 1}"
         pos_render = FONT_MAIN.render(pos_str, True, text_color)
         screen.blit(pos_render, (start_x + 10, y_pos + 10))
-        
-        # Driver Name
+
+        # Driver Name (Car ID)
         driver_str = f"CAR {car.car_id}"
         driver_render = FONT_MAIN.render(driver_str, True, text_color)
         screen.blit(driver_render, (start_x + 50, y_pos + 10))
