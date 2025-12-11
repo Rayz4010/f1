@@ -20,8 +20,9 @@ info = pygame.display.Info()
 SCREEN_WIDTH = info.current_w
 SCREEN_HEIGHT = info.current_h
 SCREEN = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.FULLSCREEN)
+pygame.display.set_caption("F1 NEAT Evolution")
 
-# --- LAYOUT CONFIGURATION ---
+# --- CONFIGURATION ---
 UI_PERCENTAGE = 0.25
 UI_WIDTH = int(SCREEN_WIDTH * UI_PERCENTAGE)
 GAME_WIDTH = SCREEN_WIDTH - UI_WIDTH
@@ -29,7 +30,7 @@ TRACK_X_OFFSET = UI_WIDTH
 
 # Load Assets
 try:
-    TRACK = pygame.image.load(os.path.join("assets", "track.png"))
+    TRACK = pygame.image.load(os.path.join("assets", "track.png")).convert()
 except FileNotFoundError:
     print("Error: assets/track.png not found. Please ensure the file exists.")
     pygame.quit()
@@ -37,7 +38,7 @@ except FileNotFoundError:
 
 original_width, original_height = TRACK.get_width(), TRACK.get_height()
 
-# Scale Track to fit the GAME_WIDTH
+# Scale Track
 TRACK = pygame.transform.scale(TRACK, (GAME_WIDTH, SCREEN_HEIGHT))
 
 scale_x = GAME_WIDTH / original_width
@@ -97,14 +98,12 @@ def format_time(ms):
     return f"{minutes}:{seconds:02}.{milliseconds:03}"
 
 def draw_ui_buttons(surface):
-    # Exit Button
     pygame.draw.rect(surface, EXIT_BUTTON_COLOR, EXIT_BUTTON_RECT)
     pygame.draw.rect(surface, EXIT_BUTTON_BORDER_COLOR, EXIT_BUTTON_RECT, max(1, int(2 * scale)))
     label_exit = FONT_MAIN.render("Exit", True, BUTTON_TEXT_COLOR)
     label_rect_exit = label_exit.get_rect(center=EXIT_BUTTON_RECT.center)
     surface.blit(label_exit, label_rect_exit)
 
-    # Reset Gen Button
     pygame.draw.rect(surface, RESET_BUTTON_COLOR, RESET_BUTTON_RECT)
     pygame.draw.rect(surface, EXIT_BUTTON_BORDER_COLOR, RESET_BUTTON_RECT, max(1, int(2 * scale)))
     label_reset = FONT_MAIN.render("New Gen", True, BUTTON_TEXT_COLOR)
@@ -142,7 +141,7 @@ class Car(pygame.sprite.Sprite):
         super().__init__()
         self.car_id = car_id
         try:
-            self.original_image = pygame.image.load(os.path.join("assets", "car.png"))
+            self.original_image = pygame.image.load(os.path.join("assets", "car.png")).convert_alpha()
         except FileNotFoundError:
             self.original_image = pygame.Surface((30, 50))
             self.original_image.fill((255, 0, 0))
@@ -151,13 +150,11 @@ class Car(pygame.sprite.Sprite):
         self.original_image = pygame.transform.scale(self.original_image, (int(self.original_image.get_width() * car_scale), int(self.original_image.get_height() * car_scale)))
         self.image = self.original_image
         
-        # Start Position
         self.start_pos = (TRACK_X_OFFSET + 490 * scale_x, 820 * scale_y)
         self.rect = self.image.get_rect(center=self.start_pos)
         self.vel_vector = pygame.math.Vector2(0.8, 0)
         self.angle = 0
-        self.rotation_vel = 5
-        self.direction = 0
+        self.rotation_vel = 7 
         self.alive = True
         self.radars = []
         self.lap_started = False
@@ -166,46 +163,93 @@ class Car(pygame.sprite.Sprite):
         self.lap_start_time = 0
         self.lap_times = []
         self.personal_best = float('inf')
-        self.speed = 6
-        self.max_speed = 20 
-        self.steer_left = 0
-        self.steer_right = 0
-        self.brake = 0
-        self.accelerator = 0
+        
+        self.speed = 2.0 
+        self.max_speed = 35 
+        
         self.scale = scale
         self.last_pos = pygame.math.Vector2(self.rect.center)
         self.stuck_frames = 0
-        self.steer = 0.0   
         self.distance_travelled = 0.0
+        self.time_alive = 0 
+        
+        self.current_steer = 0.0
+        self.target_steer = 0.0
+        self.current_accel = 0.0
+        self.target_accel = 0.0
+        self.current_brake = 0.0
+        self.target_brake = 0.0
+        
+        self.STEER_SMOOTHING = 0.1  
+        self.ACCEL_SMOOTHING = 0.1
 
-    def update(self, draw_radars=True):
+    def update(self, is_leader=False):
+        self.time_alive += 1
+        
+        # Auto Launch
+        if self.time_alive < 30:
+            self.target_accel = 1.0
+            self.target_brake = 0.0
+
+        self.smooth_controls()
         self.radars.clear()
         self.drive()
         self.check_lap()
+        
+        # Always rotate and draw in this version
         self.rotate()
+        
+        if is_leader:
+            self.image.set_alpha(255) 
+        else:
+            self.image.set_alpha(100)
+
         for radar_angle in (-60, -30, 0, 30, 60):
-            # Pass the draw flag down to the radar function
-            self.radar(radar_angle, draw=draw_radars)
+            # Only draw visual radar lines for the leader
+            self.radar(radar_angle, draw=is_leader)
+            
         self.collision()
         
-        # Anti-stuck logic
+        # Kill Rules
+        if self.time_alive > 240 and self.speed < 0.5:
+            self.alive = False
+
+        if abs(self.current_steer) > 0.8 and self.speed < 3.0 and self.time_alive > 120:
+            self.alive = False
+            
         current_pos = pygame.math.Vector2(self.rect.center)
         moved_dist = (current_pos - self.last_pos).length()
 
-        if moved_dist < 1.0:
+        if moved_dist < 0.2: 
             self.stuck_frames += 1
         else:
             self.stuck_frames = 0
         self.last_pos = current_pos
 
-        if self.stuck_frames > 180: # 3 seconds stuck
+        if self.stuck_frames > 90:
             self.alive = False
 
         self.data()
 
+    def smooth_controls(self):
+        self.current_steer += (self.target_steer - self.current_steer) * self.STEER_SMOOTHING
+        self.current_accel += (self.target_accel - self.current_accel) * self.ACCEL_SMOOTHING
+        self.current_brake += (self.target_brake - self.current_brake) * self.ACCEL_SMOOTHING
+
     def drive(self):
-        self.speed += (self.accelerator - self.brake) * 0.1
-        self.speed *= 0.99 # Friction
+        torque = 0.5 
+        if self.speed > 10:
+            torque = 0.15 
+
+        self.speed += (self.current_accel * torque)
+        
+        brake_power = 0.3
+        if self.speed < 5:
+            brake_power = 0.05
+            
+        self.speed -= (self.current_brake * brake_power) 
+        self.speed *= 0.99 
+        
         self.speed = max(0, min(self.max_speed, self.speed))
         self.rect.center += self.vel_vector * self.speed
         self.distance_travelled += self.speed   
@@ -232,8 +276,7 @@ class Car(pygame.sprite.Sprite):
                 if final_time < BEST_OVERALL_LAP:
                     BEST_OVERALL_LAP = final_time
                 
-                self.max_speed = min(self.max_speed + 2, 30)
-                self.speed = min(self.speed + 2, self.max_speed)
+                self.max_speed = min(self.max_speed + 2, 45)
 
                 self.lap_started = False
                 self.lap_completed = False
@@ -242,6 +285,9 @@ class Car(pygame.sprite.Sprite):
 
     def collision(self):
         length = 40 * self.scale
+        if not SCREEN.get_rect().collidepoint(self.rect.center):
+             return
+
         collision_point_right = [int(self.rect.center[0] + math.cos(math.radians(self.angle + 18)) * length),
                                  int(self.rect.center[1] - math.sin(math.radians(self.angle + 18)) * length)]
         collision_point_left = [int(self.rect.center[0] + math.cos(math.radians(self.angle - 18)) * length),
@@ -255,13 +301,9 @@ class Car(pygame.sprite.Sprite):
             self.alive = False
 
     def rotate(self):
-        if self.direction == 1:
-            self.angle -= self.rotation_vel
-            self.vel_vector.rotate_ip(self.rotation_vel)
-        if self.direction == -1:
-            self.angle += self.rotation_vel
-            self.vel_vector.rotate_ip(-self.rotation_vel)
-
+        turn_amount = self.rotation_vel * self.current_steer
+        self.angle -= turn_amount
+        self.vel_vector = pygame.math.Vector2(0.8, 0).rotate(-self.angle)
         self.image = pygame.transform.rotozoom(self.original_image, self.angle, 1)
         self.rect = self.image.get_rect(center=self.rect.center)
 
@@ -282,7 +324,6 @@ class Car(pygame.sprite.Sprite):
             x = int(self.rect.center[0] + math.cos(math.radians(self.angle + radar_angle)) * length)
             y = int(self.rect.center[1] - math.sin(math.radians(self.angle + radar_angle)) * length)
 
-        # Only draw if draw=True
         if draw:
             pygame.draw.line(SCREEN, (255, 255, 255, 255), self.rect.center, (x, y), 1)
             pygame.draw.circle(SCREEN, (0, 255, 0, 0), (x, y), 3)
@@ -294,7 +335,7 @@ class Car(pygame.sprite.Sprite):
     def data(self):
         input = [0, 0, 0, 0, 0]
         for i, radar in enumerate(self.radars):
-            input[i] = int(radar[1])
+            input[i] = int(radar[1]) / 300.0
         return input
 
 def draw_f1_leaderboard(screen, cars):
@@ -367,13 +408,13 @@ def draw_telemetry_panel(screen, cars):
         bar_height = 6 * scale
         
         if car.alive:
-            accel_val = max(0, min(1, car.accelerator))
+            accel_val = max(0, min(1, car.current_accel))
             accel_width = accel_val * bar_max_width
             pygame.draw.rect(screen, (0, 80, 0), (telemetry_x, y_pos + 8 * scale, bar_max_width, bar_height), 1)
             pygame.draw.rect(screen, COLOR_GREEN, (telemetry_x, y_pos + 8 * scale, accel_width, bar_height))
 
             brake_x = telemetry_x + bar_max_width + 4 * scale
-            brake_val = max(0, min(1, car.brake))
+            brake_val = max(0, min(1, car.current_brake))
             brake_width = brake_val * bar_max_width
             pygame.draw.rect(screen, (80, 0, 0), (brake_x, y_pos + 8 * scale, bar_max_width, bar_height), 1)
             pygame.draw.rect(screen, COLOR_RED, (brake_x, y_pos + 8 * scale, brake_width, bar_height))
@@ -383,7 +424,8 @@ def draw_telemetry_panel(screen, cars):
             center_x = telemetry_x + (total_steer_width / 2)
             pygame.draw.line(screen, (100,100,100), (telemetry_x, steer_y + bar_height/2), (telemetry_x + total_steer_width, steer_y + bar_height/2), 1)
             pygame.draw.line(screen, (200,200,200), (center_x, steer_y), (center_x, steer_y + bar_height), 1)
-            steer = max(-1, min(1, car.steer))
+            
+            steer = max(-1, min(1, car.current_steer))
             steer_pixels = steer * (total_steer_width / 2)
             if steer_pixels > 0:
                 pygame.draw.rect(screen, COLOR_BLUE, (center_x, steer_y, steer_pixels, bar_height))
@@ -393,6 +435,7 @@ def draw_telemetry_panel(screen, cars):
 def eval_genomes(genomes, config):
     global quit_flag, BEST_OVERALL_LAP, show_telemetry, manual_reset
     manual_reset = False 
+    
     cars = []
     nets = []
     
@@ -415,6 +458,7 @@ def eval_genomes(genomes, config):
         if manual_reset:
             run = False
         
+        # Max time 10 minutes (plenty for long laps)
         if (pygame.time.get_ticks() - start_time) > 600000:
             run = False
 
@@ -429,67 +473,54 @@ def eval_genomes(genomes, config):
         SCREEN.blit(TRACK, (TRACK_X_OFFSET, 0))
         pygame.draw.rect(SCREEN, COLOR_UI_BG, (0, 0, UI_WIDTH, SCREEN_HEIGHT))
 
-        # --- DETERMINE LEADER FOR DRAWING ---
         alive_cars = [c.sprite for c in cars if c.sprite.alive]
         leader = None
         if alive_cars:
-            # The leader is the alive car with max distance travelled
             leader = max(alive_cars, key=lambda c: c.distance_travelled)
-        # ------------------------------------
 
         for i, car_group in enumerate(cars):
             car = car_group.sprite
             if not car.alive:
                 continue
 
-            raw = nets[i].activate(car.data())
-            while len(raw) < 4:
-                raw = list(raw) + [0.0]
-
-            car.steer_left  = raw[0]
-            car.steer_right = raw[1]
-            steer = car.steer_right - car.steer_left
-
-            if abs(steer) < 0.2:
-                steer = 0.0
-
-            car.steer = max(-1.0, min(1.0, steer))
-            car.brake       = (raw[2] + 1) / 2.0
-            car.accelerator = (raw[3] + 1) / 2.0
-
-            if car.steer_left > 0.7:
-                car.direction = 1
-            elif car.steer_right > 0.7:
-                car.direction = -1
+            # Auto Launch Force
+            if car.time_alive < 30:
+                 raw = [0, 0, 0, 0]
             else:
-                car.direction = 0
-            
-            # --- Pass Draw Flag ---
-            # Only draw radars if this car is the identified leader
-            is_leader = (car == leader)
-            car.update(draw_radars=is_leader)
-            # ----------------------
+                 raw = nets[i].activate(car.data())
+                 while len(raw) < 4:
+                     raw = list(raw) + [0.0]
 
+            if car.time_alive >= 30:
+                steer_left  = raw[0]
+                steer_right = raw[1]
+                target_steer = steer_right - steer_left
+                if abs(target_steer) < 0.2: target_steer = 0.0
+                
+                car.target_steer = max(-1.0, min(1.0, target_steer))
+                car.target_brake = max(0.0, min(1.0, (raw[2] + 1) / 2.0))
+                car.target_accel = max(0.0, min(1.0, (raw[3] + 1) / 2.0))
+
+            is_leader = (car == leader)
+            car.update(is_leader=is_leader)
+
+            # Fitness
             genomes[i][1].fitness += car.speed * 0.1 
-            genomes[i][1].fitness += 0.05
+            genomes[i][1].fitness -= abs(car.target_steer - car.current_steer) * 1.5
 
             car_group.draw(SCREEN)
 
         for i, car_group in enumerate(cars):
             car = car_group.sprite
             genome = genomes[i][1]
-
             if car.lap_completed and car.lap_times:
                 last_lap = car.lap_times[-1]      
                 lap_seconds = last_lap / 1000.0
-                
-                lap_bonus = 1000.0 
-                if lap_seconds < 30: 
-                    lap_bonus += 500 
-
+                lap_bonus = 2000.0 
+                if lap_seconds < 25: lap_bonus += 1000 
                 genome.fitness += lap_bonus
                 car.lap_completed = False
-                
+                    
         draw_f1_leaderboard(SCREEN, cars)
         if show_telemetry:
             draw_telemetry_panel(SCREEN, cars)
@@ -520,7 +551,7 @@ def run(config_path):
     pop.add_reporter(neat.Checkpointer(5))
 
     try:
-        pop.run(eval_genomes, 500)
+        pop.run(eval_genomes, 5000)
     except KeyboardInterrupt:
         print("Evolution stopped by user.")
         pygame.quit()
