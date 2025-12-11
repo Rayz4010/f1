@@ -29,8 +29,8 @@ GAME_WIDTH = SCREEN_WIDTH - UI_WIDTH
 TRACK_X_OFFSET = UI_WIDTH
 
 # --- CAMERA CONFIG ---
-ZOOM_FACTOR = 2.5  # How much to zoom in (Like the video)
-CAMERA_SMOOTHING = 0.1 # Lower = Smoother camera, Higher = Snappier
+ZOOM_FACTOR = 2.5 
+CAMERA_SMOOTHING = 0.1 
 
 # Load Assets
 try:
@@ -42,14 +42,11 @@ except FileNotFoundError:
 
 original_width, original_height = TRACK.get_width(), TRACK.get_height()
 
-# --- SCALE CALCULATION ---
-# We calculate the scale to fit the screen, then multiply by ZOOM_FACTOR
+# Scale Track
 base_scale_x = GAME_WIDTH / original_width
 base_scale_y = SCREEN_HEIGHT / original_height
 scale = min(base_scale_x, base_scale_y) * ZOOM_FACTOR
 
-# Scale the TRACK surface to the new zoomed size
-# The track is now likely LARGER than the screen
 scaled_width = int(original_width * scale)
 scaled_height = int(original_height * scale)
 TRACK = pygame.transform.scale(TRACK, (scaled_width, scaled_height))
@@ -58,13 +55,16 @@ TRACK = pygame.transform.scale(TRACK, (scaled_width, scaled_height))
 try:
     FONT_MAIN = pygame.font.SysFont("Consolas", int(18), bold=True)
     FONT_HEADER = pygame.font.SysFont("Arial", int(20), bold=True)
+    FONT_NET = pygame.font.SysFont("Arial", 12)
 except:
     FONT_MAIN = pygame.font.SysFont(None, 22)
     FONT_HEADER = pygame.font.SysFont(None, 24)
+    FONT_NET = pygame.font.SysFont(None, 14)
 
 quit_flag = False
 manual_reset = False
 show_telemetry = False
+show_network = False  # Toggle with 'N'
 
 # BUTTONS CONFIGURATION
 BUTTON_PADDING = 20
@@ -155,23 +155,16 @@ class Car(pygame.sprite.Sprite):
             self.original_image = pygame.Surface((30, 50))
             self.original_image.fill((255, 0, 0))
 
-        # Scale car relative to the new Zoom
         car_scale = scale * 0.2
         self.original_image = pygame.transform.scale(self.original_image, (int(self.original_image.get_width() * car_scale), int(self.original_image.get_height() * car_scale)))
         self.image = self.original_image
         
-        # Start Position (Scaled to the new larger track)
-        # Note: We assume the track starts near the same relative spot.
-        # We multiply the original relative position by the new scale.
         self.start_pos = (490 * (scaled_width / original_width), 820 * (scaled_height / original_height))
         
         self.rect = self.image.get_rect(center=self.start_pos)
         self.vel_vector = pygame.math.Vector2(0.8, 0)
         self.angle = 0
-        
-        # Increase speeds slightly to match the larger world size
         self.rotation_vel = 7 * (ZOOM_FACTOR * 0.8) 
-        
         self.alive = True
         self.radars = []
         self.lap_started = False
@@ -180,10 +173,8 @@ class Car(pygame.sprite.Sprite):
         self.lap_start_time = 0
         self.lap_times = []
         self.personal_best = float('inf')
-        
         self.speed = 2.0 
-        self.max_speed = 35 * (ZOOM_FACTOR * 0.8) # Adjust max speed for zoom
-        
+        self.max_speed = 35 * (ZOOM_FACTOR * 0.8) 
         self.scale = scale
         self.last_pos = pygame.math.Vector2(self.rect.center)
         self.stuck_frames = 0
@@ -196,7 +187,6 @@ class Car(pygame.sprite.Sprite):
         self.target_accel = 0.0
         self.current_brake = 0.0
         self.target_brake = 0.0
-        
         self.STEER_SMOOTHING = 0.1  
         self.ACCEL_SMOOTHING = 0.1
 
@@ -250,7 +240,7 @@ class Car(pygame.sprite.Sprite):
 
     def drive(self):
         torque = 0.5 
-        if self.speed > 15: # adjusted for zoom speed
+        if self.speed > 15: 
             torque = 0.15 
 
         self.speed += (self.current_accel * torque)
@@ -268,7 +258,6 @@ class Car(pygame.sprite.Sprite):
 
     def check_lap(self):
         global BEST_OVERALL_LAP
-        
         if self.lap_started and self.alive:
              self.current_lap_time = pygame.time.get_ticks() - self.lap_start_time
 
@@ -282,42 +271,27 @@ class Car(pygame.sprite.Sprite):
                 self.lap_completed = True
                 final_time = pygame.time.get_ticks() - self.lap_start_time
                 self.lap_times.append(final_time)
-                
                 if final_time < self.personal_best:
                     self.personal_best = final_time
                 if final_time < BEST_OVERALL_LAP:
                     BEST_OVERALL_LAP = final_time
-                
-                # Incentive
                 self.max_speed = min(self.max_speed + 5, 100) 
-
                 self.lap_started = False
                 self.lap_completed = False
                 self.lap_start_time = 0
                 self.current_lap_time = 0
 
     def collision(self):
-        # IMPORTANT: With a scrolling camera, we CANNOT check SCREEN.get_at()
-        # because the car might be "off screen" or the screen pixels might represent the wrong place.
-        # We must check the TRACK surface directly.
-        
         length = 40 * self.scale
-        
-        # Calculate points
         right_pt = [int(self.rect.center[0] + math.cos(math.radians(self.angle + 18)) * length),
                     int(self.rect.center[1] - math.sin(math.radians(self.angle + 18)) * length)]
         left_pt  = [int(self.rect.center[0] + math.cos(math.radians(self.angle - 18)) * length),
                     int(self.rect.center[1] - math.sin(math.radians(self.angle - 18)) * length)]
 
-        # Check bounds first to prevent crash if car goes out of the huge track map
         max_w, max_h = TRACK.get_width(), TRACK.get_height()
-        
-        # Helper to check color
         def is_collision(pt):
-            if pt[0] < 0 or pt[0] >= max_w or pt[1] < 0 or pt[1] >= max_h:
-                return True # Out of bounds is collision
+            if pt[0] < 0 or pt[0] >= max_w or pt[1] < 0 or pt[1] >= max_h: return True
             try:
-                # Check against TRACK surface, not SCREEN
                 return TRACK.get_at(pt) == pygame.Color(2, 105, 31, 255)
             except:
                 return True
@@ -336,32 +310,24 @@ class Car(pygame.sprite.Sprite):
         length = 0
         x = int(self.rect.center[0])
         y = int(self.rect.center[1])
-        
         max_w, max_h = TRACK.get_width(), TRACK.get_height()
 
         while length < 300 * self.scale:
-            if x < 0 or x >= max_w or y < 0 or y >= max_h:
-                break
+            if x < 0 or x >= max_w or y < 0 or y >= max_h: break
             try:
-                # Check against TRACK
-                if TRACK.get_at((x, y)) == pygame.Color(2, 105, 31, 255):
-                    break
-            except IndexError:
-                break
+                if TRACK.get_at((x, y)) == pygame.Color(2, 105, 31, 255): break
+            except IndexError: break
             length += 1
             x = int(self.rect.center[0] + math.cos(math.radians(self.angle + radar_angle)) * length)
             y = int(self.rect.center[1] - math.sin(math.radians(self.angle + radar_angle)) * length)
 
-        # Store visual points for drawing later (relative to camera)
-        # We store World Coordinates here
-        dist = int(math.sqrt(math.pow(self.rect.center[0] - x, 2)
-                             + math.pow(self.rect.center[1] - y, 2)))
+        dist = int(math.sqrt(math.pow(self.rect.center[0] - x, 2) + math.pow(self.rect.center[1] - y, 2)))
         self.radars.append([radar_angle, dist, (x, y)])
 
     def data(self):
         input = [0, 0, 0, 0, 0]
         for i, radar in enumerate(self.radars):
-            input[i] = int(radar[1]) / (300.0 * self.scale) # Normalize
+            input[i] = int(radar[1]) / (300.0 * self.scale) 
         return input
 
 def draw_f1_leaderboard(screen, cars):
@@ -380,14 +346,11 @@ def draw_f1_leaderboard(screen, cars):
         y_pos = start_y + row_height + (i * row_height)
         text_color = COLOR_TEXT_WHITE
         time_text = ""
-
         if len(car.lap_times) > 0:
             last_lap = car.lap_times[-1]
             time_text = format_time(last_lap)
-            if last_lap == BEST_OVERALL_LAP:
-                text_color = COLOR_PURPLE
-            elif last_lap == car.personal_best:
-                text_color = COLOR_GREEN
+            if last_lap == BEST_OVERALL_LAP: text_color = COLOR_PURPLE
+            elif last_lap == car.personal_best: text_color = COLOR_GREEN
         else:
             time_text = format_time(car.current_lap_time)
             text_color = (255, 255, 200)
@@ -458,8 +421,114 @@ def draw_telemetry_panel(screen, cars):
             else:
                 pygame.draw.rect(screen, COLOR_BLUE, (center_x + steer_pixels, steer_y, abs(steer_pixels), bar_height))
 
+def draw_chase_cam(screen, leader):
+    CAM_SIZE = 250
+    ZOOM = 2.0
+    VIEW_SIZE = CAM_SIZE / ZOOM
+    cam_x = 20
+    cam_y = SCREEN_HEIGHT - CAM_SIZE - 20
+    
+    lens = pygame.Surface((int(VIEW_SIZE), int(VIEW_SIZE)))
+    lens.fill((30, 30, 30))
+    
+    offset_x = -leader.rect.centerx + (VIEW_SIZE / 2)
+    offset_y = -leader.rect.centery + (VIEW_SIZE / 2)
+    
+    lens.blit(TRACK, (offset_x, offset_y))
+    car_draw_pos = (int(VIEW_SIZE/2 - leader.image.get_width()/2), int(VIEW_SIZE/2 - leader.image.get_height()/2))
+    lens.blit(leader.image, car_draw_pos)
+    
+    final_view = pygame.transform.scale(lens, (int(CAM_SIZE), int(CAM_SIZE)))
+    pygame.draw.rect(screen, (255, 255, 255), (cam_x - 2, cam_y - 2, CAM_SIZE + 4, CAM_SIZE + 4), 2)
+    screen.blit(final_view, (cam_x, cam_y))
+    screen.blit(FONT_MAIN.render("CHASE CAM", True, (255, 255, 255)), (cam_x, cam_y - 25))
+
+def draw_neural_network(screen, genome, config, inputs, outputs):
+    # Panel Config
+    panel_w = 280
+    panel_h = 220
+    panel_x = SCREEN_WIDTH - panel_w - 20
+    panel_y = SCREEN_HEIGHT - panel_h - 20
+    
+    s = pygame.Surface((panel_w, panel_h))
+    s.set_alpha(230)
+    s.fill((30, 30, 30))
+    screen.blit(s, (panel_x, panel_y))
+    
+    pygame.draw.rect(screen, (255, 255, 255), (panel_x, panel_y, panel_w, panel_h), 2)
+    screen.blit(FONT_MAIN.render("NEURAL NETWORK", True, (255, 255, 255)), (panel_x + 10, panel_y + 10))
+
+    # Node positions
+    layer_w = panel_w - 40
+    layer_h = panel_h - 40
+    node_radius = 6
+    
+    input_nodes = [-1, -2, -3, -4, -5]
+    output_nodes = [0, 1, 2, 3]
+    
+    node_positions = {}
+    
+    # Inputs (Left column)
+    for i, node_key in enumerate(input_nodes):
+        x = panel_x + 30
+        y = panel_y + 40 + (i * (layer_h / len(input_nodes)))
+        node_positions[node_key] = (int(x), int(y))
+        
+        # Color based on value (0.0 to 1.0)
+        val = inputs[i] if i < len(inputs) else 0.0
+        color_intensity = min(255, int(val * 255))
+        color = (color_intensity, 255, color_intensity) if val > 0.1 else (50, 50, 50)
+        
+        pygame.draw.circle(screen, color, (int(x), int(y)), node_radius)
+        # Label
+        lbl = FONT_NET.render(f"R{i}", True, (200, 200, 200))
+        screen.blit(lbl, (x - 20, y - 5))
+
+    # Outputs (Right column)
+    output_labels = ["L", "R", "Brk", "Gas"]
+    for i, node_key in enumerate(output_nodes):
+        x = panel_x + panel_w - 30
+        y = panel_y + 50 + (i * (layer_h / len(output_nodes)))
+        node_positions[node_key] = (int(x), int(y))
+        
+        # Color based on value
+        val = outputs[i] if i < len(outputs) else 0.0
+        # Tanh output is -1 to 1, normalize to 0-1 for color
+        val_norm = (val + 1) / 2
+        color_intensity = min(255, int(val_norm * 255))
+        color = (255, color_intensity, color_intensity) if val > 0.5 else (50, 50, 50)
+        
+        pygame.draw.circle(screen, color, (int(x), int(y)), node_radius)
+        lbl = FONT_NET.render(output_labels[i], True, (200, 200, 200))
+        screen.blit(lbl, (x + 10, y - 5))
+
+    # Connections
+    for cg in genome.connections.values():
+        if not cg.enabled: continue
+        
+        # Simple assumption: Input/Hidden -> Output
+        # Since we don't have exact hidden node pos calc here easily, 
+        # we skip drawing lines to hidden nodes for visual simplicity in this basic visualizer
+        # OR we just map hidden nodes to the middle.
+        
+        in_node = cg.key[0]
+        out_node = cg.key[1]
+        
+        # Assign position for hidden nodes if missing
+        if in_node not in node_positions:
+            node_positions[in_node] = (int(panel_x + panel_w/2), int(panel_y + panel_h/2))
+        if out_node not in node_positions:
+            node_positions[out_node] = (int(panel_x + panel_w/2), int(panel_y + panel_h/2))
+            
+        start = node_positions[in_node]
+        end = node_positions[out_node]
+        
+        color = (0, 255, 0) if cg.weight > 0 else (255, 0, 0)
+        width = max(1, int(abs(cg.weight)))
+        pygame.draw.line(screen, color, start, end, width)
+
 def eval_genomes(genomes, config):
-    global quit_flag, BEST_OVERALL_LAP, show_telemetry, manual_reset
+    global quit_flag, BEST_OVERALL_LAP, show_telemetry, manual_reset, show_network
     manual_reset = False 
     
     cars = []
@@ -479,69 +548,59 @@ def eval_genomes(genomes, config):
     clock = pygame.time.Clock()
     start_time = pygame.time.get_ticks()
     
-    # Camera variables
     cam_x = 0
     cam_y = 0
-    
     run = True
     
     while run:
-        if manual_reset:
-            run = False
-        
-        if (pygame.time.get_ticks() - start_time) > 600000:
-            run = False
+        if manual_reset: run = False
+        if (pygame.time.get_ticks() - start_time) > 600000: run = False
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 quit_flag = True
                 run = False
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_i:
-                    show_telemetry = not show_telemetry
+                if event.key == pygame.K_i: show_telemetry = not show_telemetry
+                if event.key == pygame.K_n: show_network = not show_network
 
-        # 1. Update Cars
         alive_cars = [c.sprite for c in cars if c.sprite.alive]
         leader = None
-        if alive_cars:
-            leader = max(alive_cars, key=lambda c: c.distance_travelled)
-
-        # 2. Camera Update (Smooth follow)
-        if leader:
-            # Target is to center the leader in the GAME AREA (Right side of screen)
-            # The game area starts at UI_WIDTH and ends at SCREEN_WIDTH
-            game_center_x = UI_WIDTH + (GAME_WIDTH / 2)
-            game_center_y = SCREEN_HEIGHT / 2
-            
-            target_cam_x = leader.rect.centerx - game_center_x
-            target_cam_y = leader.rect.centery - game_center_y
-            
-            # Linear Interpolation (Lerp) for smoothness
-            cam_x += (target_cam_x - cam_x) * CAMERA_SMOOTHING
-            cam_y += (target_cam_y - cam_y) * CAMERA_SMOOTHING
+        leader_genome = None
+        leader_inputs = []
+        leader_outputs = []
         
-        # Clamp camera so we don't see too much black void (Optional)
-        # For now, we allow free movement to ensure leader is always centered
+        if alive_cars:
+            # Find leader by index
+            best_car_idx = 0
+            best_dist = -1
+            for idx, c_group in enumerate(cars):
+                c = c_group.sprite
+                if c.alive and c.distance_travelled > best_dist:
+                    best_dist = c.distance_travelled
+                    leader = c
+                    leader_genome = genomes[idx][1]
+                    best_car_idx = idx
 
         for i, car_group in enumerate(cars):
             car = car_group.sprite
-            if not car.alive:
-                continue
+            if not car.alive: continue
 
-            # Auto Launch Force
             if car.time_alive < 30:
                  raw = [0, 0, 0, 0]
             else:
                  raw = nets[i].activate(car.data())
-                 while len(raw) < 4:
-                     raw = list(raw) + [0.0]
+                 while len(raw) < 4: raw = list(raw) + [0.0]
+
+            if car == leader:
+                leader_inputs = car.data()
+                leader_outputs = raw
 
             if car.time_alive >= 30:
                 steer_left  = raw[0]
                 steer_right = raw[1]
                 target_steer = steer_right - steer_left
                 if abs(target_steer) < 0.2: target_steer = 0.0
-                
                 car.target_steer = max(-1.0, min(1.0, target_steer))
                 car.target_brake = max(0.0, min(1.0, (raw[2] + 1) / 2.0))
                 car.target_accel = max(0.0, min(1.0, (raw[3] + 1) / 2.0))
@@ -552,60 +611,50 @@ def eval_genomes(genomes, config):
             genomes[i][1].fitness += car.speed * 0.1 
             genomes[i][1].fitness -= abs(car.target_steer - car.current_steer) * 1.5
 
-        # 3. DRAWING (SCROLLING WORLD)
-        
-        # Clear screen
-        SCREEN.fill((20, 20, 20)) # Dark Grey background
-        
-        # Define the visible Game Area Rect
+        # Camera Logic
+        if leader:
+            game_center_x = UI_WIDTH + (GAME_WIDTH / 2)
+            game_center_y = SCREEN_HEIGHT / 2
+            target_cam_x = leader.rect.centerx - game_center_x
+            target_cam_y = leader.rect.centery - game_center_y
+            cam_x += (target_cam_x - cam_x) * CAMERA_SMOOTHING
+            cam_y += (target_cam_y - cam_y) * CAMERA_SMOOTHING
+
+        # Drawing
+        SCREEN.fill((20, 20, 20))
         game_view_rect = pygame.Rect(UI_WIDTH, 0, GAME_WIDTH, SCREEN_HEIGHT)
-        
-        # Set clipping so drawing doesn't spill into the UI panel
         SCREEN.set_clip(game_view_rect)
-        
-        # Draw Track (Shifted by camera)
         SCREEN.blit(TRACK, (0 - cam_x, 0 - cam_y))
         
-        # Draw Cars (Shifted by camera)
         for i, car_group in enumerate(cars):
             car = car_group.sprite
             if car.alive:
-                # Manual drawing to apply offset
-                # car.image is the rotated sprite
-                # car.rect is the position in WORLD coordinates
-                
                 draw_pos = (car.rect.x - cam_x, car.rect.y - cam_y)
                 SCREEN.blit(car.image, draw_pos)
-                
-                # Draw Leader Radar (Shifted)
                 if car == leader:
                     for r_data in car.radars:
-                        # r_data = [angle, dist, (world_x, world_y)]
-                        # We need the 3rd element (endpoint) from radar()
                         if len(r_data) >= 3:
                             end_pt = r_data[2]
                             start_pt = car.rect.center
-                            
                             adj_start = (start_pt[0] - cam_x, start_pt[1] - cam_y)
                             adj_end = (end_pt[0] - cam_x, end_pt[1] - cam_y)
-                            
                             pygame.draw.line(SCREEN, (255, 255, 255), adj_start, adj_end, 1)
                             pygame.draw.circle(SCREEN, (0, 255, 0), (int(adj_end[0]), int(adj_end[1])), 3)
 
-        # Reset clipping to draw UI
         SCREEN.set_clip(None)
-        
-        # Draw UI Background (Left Panel)
         pygame.draw.rect(SCREEN, COLOR_UI_BG, (0, 0, UI_WIDTH, SCREEN_HEIGHT))
         pygame.draw.line(SCREEN, (50, 50, 50), (UI_WIDTH, 0), (UI_WIDTH, SCREEN_HEIGHT), 2)
 
-        # Draw Overlays
         draw_f1_leaderboard(SCREEN, cars)
-        if show_telemetry:
-            draw_telemetry_panel(SCREEN, cars)
+        if leader: draw_chase_cam(SCREEN, leader)
+        if show_telemetry: draw_telemetry_panel(SCREEN, cars)
+        
+        # Draw Network if enabled and leader exists
+        if show_network and leader_genome:
+            draw_neural_network(SCREEN, leader_genome, config, leader_inputs, leader_outputs)
+            
         draw_ui_buttons(SCREEN)
 
-        # Check Laps
         for i, car_group in enumerate(cars):
             car = car_group.sprite
             genome = genomes[i][1]
@@ -620,27 +669,17 @@ def eval_genomes(genomes, config):
         pygame.display.update()
         clock.tick(60)
 
-        if all(not car_group.sprite.alive for car_group in cars):
-            run = False
+        if all(not car_group.sprite.alive for car_group in cars): run = False
 
-    if quit_flag:
-        sys.exit(0)
+    if quit_flag: sys.exit(0)
 
 def run(config_path):
-    config = neat.config.Config(
-        neat.DefaultGenome,
-        neat.DefaultReproduction,
-        neat.DefaultSpeciesSet,
-        neat.DefaultStagnation,
-        config_path
-    )
-
+    config = neat.config.Config(neat.DefaultGenome, neat.DefaultReproduction, neat.DefaultSpeciesSet, neat.DefaultStagnation, config_path)
     pop = neat.Population(config)
     pop.add_reporter(neat.StdOutReporter(True))
     stats = neat.StatisticsReporter()
     pop.add_reporter(stats)
     pop.add_reporter(neat.Checkpointer(5))
-
     try:
         pop.run(eval_genomes, 5000)
     except KeyboardInterrupt:
