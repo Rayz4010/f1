@@ -28,6 +28,10 @@ UI_WIDTH = int(SCREEN_WIDTH * UI_PERCENTAGE)
 GAME_WIDTH = SCREEN_WIDTH - UI_WIDTH
 TRACK_X_OFFSET = UI_WIDTH
 
+# --- CAMERA CONFIG ---
+ZOOM_FACTOR = 2.5  # How much to zoom in (Like the video)
+CAMERA_SMOOTHING = 0.1 # Lower = Smoother camera, Higher = Snappier
+
 # Load Assets
 try:
     TRACK = pygame.image.load(os.path.join("assets", "track.png")).convert()
@@ -38,29 +42,34 @@ except FileNotFoundError:
 
 original_width, original_height = TRACK.get_width(), TRACK.get_height()
 
-# Scale Track
-TRACK = pygame.transform.scale(TRACK, (GAME_WIDTH, SCREEN_HEIGHT))
+# --- SCALE CALCULATION ---
+# We calculate the scale to fit the screen, then multiply by ZOOM_FACTOR
+base_scale_x = GAME_WIDTH / original_width
+base_scale_y = SCREEN_HEIGHT / original_height
+scale = min(base_scale_x, base_scale_y) * ZOOM_FACTOR
 
-scale_x = GAME_WIDTH / original_width
-scale_y = SCREEN_HEIGHT / original_height
-scale = min(scale_x, scale_y)
+# Scale the TRACK surface to the new zoomed size
+# The track is now likely LARGER than the screen
+scaled_width = int(original_width * scale)
+scaled_height = int(original_height * scale)
+TRACK = pygame.transform.scale(TRACK, (scaled_width, scaled_height))
 
 # Fonts
 try:
-    FONT_MAIN = pygame.font.SysFont("Consolas", int(18 * scale), bold=True)
-    FONT_HEADER = pygame.font.SysFont("Arial", int(20 * scale), bold=True)
+    FONT_MAIN = pygame.font.SysFont("Consolas", int(18), bold=True)
+    FONT_HEADER = pygame.font.SysFont("Arial", int(20), bold=True)
 except:
-    FONT_MAIN = pygame.font.SysFont(None, int(22 * scale))
-    FONT_HEADER = pygame.font.SysFont(None, int(24 * scale))
+    FONT_MAIN = pygame.font.SysFont(None, 22)
+    FONT_HEADER = pygame.font.SysFont(None, 24)
 
 quit_flag = False
 manual_reset = False
 show_telemetry = False
 
 # BUTTONS CONFIGURATION
-BUTTON_PADDING = int(20 * scale)
-BUTTON_WIDTH = int(140 * scale)
-BUTTON_HEIGHT = int(48 * scale)
+BUTTON_PADDING = 20
+BUTTON_WIDTH = 140
+BUTTON_HEIGHT = 48
 
 EXIT_BUTTON_RECT = pygame.Rect(
     SCREEN_WIDTH - BUTTON_WIDTH - BUTTON_PADDING, 
@@ -99,13 +108,13 @@ def format_time(ms):
 
 def draw_ui_buttons(surface):
     pygame.draw.rect(surface, EXIT_BUTTON_COLOR, EXIT_BUTTON_RECT)
-    pygame.draw.rect(surface, EXIT_BUTTON_BORDER_COLOR, EXIT_BUTTON_RECT, max(1, int(2 * scale)))
+    pygame.draw.rect(surface, EXIT_BUTTON_BORDER_COLOR, EXIT_BUTTON_RECT, 2)
     label_exit = FONT_MAIN.render("Exit", True, BUTTON_TEXT_COLOR)
     label_rect_exit = label_exit.get_rect(center=EXIT_BUTTON_RECT.center)
     surface.blit(label_exit, label_rect_exit)
 
     pygame.draw.rect(surface, RESET_BUTTON_COLOR, RESET_BUTTON_RECT)
-    pygame.draw.rect(surface, EXIT_BUTTON_BORDER_COLOR, RESET_BUTTON_RECT, max(1, int(2 * scale)))
+    pygame.draw.rect(surface, EXIT_BUTTON_BORDER_COLOR, RESET_BUTTON_RECT, 2)
     label_reset = FONT_MAIN.render("New Gen", True, BUTTON_TEXT_COLOR)
     label_rect_reset = label_reset.get_rect(center=RESET_BUTTON_RECT.center)
     surface.blit(label_reset, label_rect_reset)
@@ -146,15 +155,23 @@ class Car(pygame.sprite.Sprite):
             self.original_image = pygame.Surface((30, 50))
             self.original_image.fill((255, 0, 0))
 
+        # Scale car relative to the new Zoom
         car_scale = scale * 0.2
         self.original_image = pygame.transform.scale(self.original_image, (int(self.original_image.get_width() * car_scale), int(self.original_image.get_height() * car_scale)))
         self.image = self.original_image
         
-        self.start_pos = (TRACK_X_OFFSET + 490 * scale_x, 820 * scale_y)
+        # Start Position (Scaled to the new larger track)
+        # Note: We assume the track starts near the same relative spot.
+        # We multiply the original relative position by the new scale.
+        self.start_pos = (490 * (scaled_width / original_width), 820 * (scaled_height / original_height))
+        
         self.rect = self.image.get_rect(center=self.start_pos)
         self.vel_vector = pygame.math.Vector2(0.8, 0)
         self.angle = 0
-        self.rotation_vel = 7 
+        
+        # Increase speeds slightly to match the larger world size
+        self.rotation_vel = 7 * (ZOOM_FACTOR * 0.8) 
+        
         self.alive = True
         self.radars = []
         self.lap_started = False
@@ -165,7 +182,7 @@ class Car(pygame.sprite.Sprite):
         self.personal_best = float('inf')
         
         self.speed = 2.0 
-        self.max_speed = 35 
+        self.max_speed = 35 * (ZOOM_FACTOR * 0.8) # Adjust max speed for zoom
         
         self.scale = scale
         self.last_pos = pygame.math.Vector2(self.rect.center)
@@ -186,7 +203,6 @@ class Car(pygame.sprite.Sprite):
     def update(self, is_leader=False):
         self.time_alive += 1
         
-        # Auto Launch
         if self.time_alive < 30:
             self.target_accel = 1.0
             self.target_brake = 0.0
@@ -195,8 +211,6 @@ class Car(pygame.sprite.Sprite):
         self.radars.clear()
         self.drive()
         self.check_lap()
-        
-        # Always rotate and draw in this version
         self.rotate()
         
         if is_leader:
@@ -205,12 +219,10 @@ class Car(pygame.sprite.Sprite):
             self.image.set_alpha(100)
 
         for radar_angle in (-60, -30, 0, 30, 60):
-            # Only draw visual radar lines for the leader
             self.radar(radar_angle, draw=is_leader)
             
         self.collision()
         
-        # Kill Rules
         if self.time_alive > 240 and self.speed < 0.5:
             self.alive = False
 
@@ -220,7 +232,7 @@ class Car(pygame.sprite.Sprite):
         current_pos = pygame.math.Vector2(self.rect.center)
         moved_dist = (current_pos - self.last_pos).length()
 
-        if moved_dist < 0.2: 
+        if moved_dist < 0.5: 
             self.stuck_frames += 1
         else:
             self.stuck_frames = 0
@@ -238,7 +250,7 @@ class Car(pygame.sprite.Sprite):
 
     def drive(self):
         torque = 0.5 
-        if self.speed > 10:
+        if self.speed > 15: # adjusted for zoom speed
             torque = 0.15 
 
         self.speed += (self.current_accel * torque)
@@ -276,7 +288,8 @@ class Car(pygame.sprite.Sprite):
                 if final_time < BEST_OVERALL_LAP:
                     BEST_OVERALL_LAP = final_time
                 
-                self.max_speed = min(self.max_speed + 2, 45)
+                # Incentive
+                self.max_speed = min(self.max_speed + 5, 100) 
 
                 self.lap_started = False
                 self.lap_completed = False
@@ -284,20 +297,32 @@ class Car(pygame.sprite.Sprite):
                 self.current_lap_time = 0
 
     def collision(self):
+        # IMPORTANT: With a scrolling camera, we CANNOT check SCREEN.get_at()
+        # because the car might be "off screen" or the screen pixels might represent the wrong place.
+        # We must check the TRACK surface directly.
+        
         length = 40 * self.scale
-        if not SCREEN.get_rect().collidepoint(self.rect.center):
-             return
+        
+        # Calculate points
+        right_pt = [int(self.rect.center[0] + math.cos(math.radians(self.angle + 18)) * length),
+                    int(self.rect.center[1] - math.sin(math.radians(self.angle + 18)) * length)]
+        left_pt  = [int(self.rect.center[0] + math.cos(math.radians(self.angle - 18)) * length),
+                    int(self.rect.center[1] - math.sin(math.radians(self.angle - 18)) * length)]
 
-        collision_point_right = [int(self.rect.center[0] + math.cos(math.radians(self.angle + 18)) * length),
-                                 int(self.rect.center[1] - math.sin(math.radians(self.angle + 18)) * length)]
-        collision_point_left = [int(self.rect.center[0] + math.cos(math.radians(self.angle - 18)) * length),
-                                int(self.rect.center[1] - math.sin(math.radians(self.angle - 18)) * length)]
+        # Check bounds first to prevent crash if car goes out of the huge track map
+        max_w, max_h = TRACK.get_width(), TRACK.get_height()
+        
+        # Helper to check color
+        def is_collision(pt):
+            if pt[0] < 0 or pt[0] >= max_w or pt[1] < 0 or pt[1] >= max_h:
+                return True # Out of bounds is collision
+            try:
+                # Check against TRACK surface, not SCREEN
+                return TRACK.get_at(pt) == pygame.Color(2, 105, 31, 255)
+            except:
+                return True
 
-        try:
-            if SCREEN.get_at(collision_point_right) == pygame.Color(2, 105, 31, 255) \
-                    or SCREEN.get_at(collision_point_left) == pygame.Color(2, 105, 31, 255):
-                self.alive = False
-        except IndexError:
+        if is_collision(right_pt) or is_collision(left_pt):
             self.alive = False
 
     def rotate(self):
@@ -311,12 +336,15 @@ class Car(pygame.sprite.Sprite):
         length = 0
         x = int(self.rect.center[0])
         y = int(self.rect.center[1])
+        
+        max_w, max_h = TRACK.get_width(), TRACK.get_height()
 
         while length < 300 * self.scale:
-            if not (TRACK_X_OFFSET <= x < SCREEN_WIDTH and 0 <= y < SCREEN_HEIGHT):
+            if x < 0 or x >= max_w or y < 0 or y >= max_h:
                 break
             try:
-                if SCREEN.get_at((x, y)) == pygame.Color(2, 105, 31, 255):
+                # Check against TRACK
+                if TRACK.get_at((x, y)) == pygame.Color(2, 105, 31, 255):
                     break
             except IndexError:
                 break
@@ -324,24 +352,22 @@ class Car(pygame.sprite.Sprite):
             x = int(self.rect.center[0] + math.cos(math.radians(self.angle + radar_angle)) * length)
             y = int(self.rect.center[1] - math.sin(math.radians(self.angle + radar_angle)) * length)
 
-        if draw:
-            pygame.draw.line(SCREEN, (255, 255, 255, 255), self.rect.center, (x, y), 1)
-            pygame.draw.circle(SCREEN, (0, 255, 0, 0), (x, y), 3)
-
+        # Store visual points for drawing later (relative to camera)
+        # We store World Coordinates here
         dist = int(math.sqrt(math.pow(self.rect.center[0] - x, 2)
                              + math.pow(self.rect.center[1] - y, 2)))
-        self.radars.append([radar_angle, dist])
+        self.radars.append([radar_angle, dist, (x, y)])
 
     def data(self):
         input = [0, 0, 0, 0, 0]
         for i, radar in enumerate(self.radars):
-            input[i] = int(radar[1]) / 300.0
+            input[i] = int(radar[1]) / (300.0 * self.scale) # Normalize
         return input
 
 def draw_f1_leaderboard(screen, cars):
     start_x = 0
     start_y = 0
-    row_height = 40 * scale
+    row_height = 40 
     active_cars = [group.sprite for group in cars if group.sprite.alive]
     active_cars.sort(key=lambda x: x.distance_travelled, reverse=True)
 
@@ -374,9 +400,9 @@ def draw_f1_leaderboard(screen, cars):
         screen.blit(time_render, time_rect)
 
 def draw_telemetry_panel(screen, cars):
-    panel_width = 230 * scale
-    row_height = 30 * scale
-    header_height = 30 * scale
+    panel_width = 230
+    row_height = 30
+    header_height = 30
     
     needed_height = (len(cars) * row_height) + header_height + 10
     total_height = min(needed_height, SCREEN_HEIGHT - 50)
@@ -403,24 +429,24 @@ def draw_telemetry_panel(screen, cars):
         id_text = FONT_MAIN.render(f"{car.car_id}", True, COLOR_TEXT_WHITE if car.alive else COLOR_TEXT_GREY)
         screen.blit(id_text, (start_x + 10, y_pos))
         
-        telemetry_x = start_x + 50 * scale 
-        bar_max_width = 35 * scale
-        bar_height = 6 * scale
+        telemetry_x = start_x + 50 
+        bar_max_width = 35 
+        bar_height = 6 
         
         if car.alive:
             accel_val = max(0, min(1, car.current_accel))
             accel_width = accel_val * bar_max_width
-            pygame.draw.rect(screen, (0, 80, 0), (telemetry_x, y_pos + 8 * scale, bar_max_width, bar_height), 1)
-            pygame.draw.rect(screen, COLOR_GREEN, (telemetry_x, y_pos + 8 * scale, accel_width, bar_height))
+            pygame.draw.rect(screen, (0, 80, 0), (telemetry_x, y_pos + 8, bar_max_width, bar_height), 1)
+            pygame.draw.rect(screen, COLOR_GREEN, (telemetry_x, y_pos + 8, accel_width, bar_height))
 
-            brake_x = telemetry_x + bar_max_width + 4 * scale
+            brake_x = telemetry_x + bar_max_width + 4
             brake_val = max(0, min(1, car.current_brake))
             brake_width = brake_val * bar_max_width
-            pygame.draw.rect(screen, (80, 0, 0), (brake_x, y_pos + 8 * scale, bar_max_width, bar_height), 1)
-            pygame.draw.rect(screen, COLOR_RED, (brake_x, y_pos + 8 * scale, brake_width, bar_height))
+            pygame.draw.rect(screen, (80, 0, 0), (brake_x, y_pos + 8, bar_max_width, bar_height), 1)
+            pygame.draw.rect(screen, COLOR_RED, (brake_x, y_pos + 8, brake_width, bar_height))
 
-            steer_y = y_pos + 18 * scale
-            total_steer_width = (bar_max_width * 2) + 4 * scale
+            steer_y = y_pos + 18
+            total_steer_width = (bar_max_width * 2) + 4
             center_x = telemetry_x + (total_steer_width / 2)
             pygame.draw.line(screen, (100,100,100), (telemetry_x, steer_y + bar_height/2), (telemetry_x + total_steer_width, steer_y + bar_height/2), 1)
             pygame.draw.line(screen, (200,200,200), (center_x, steer_y), (center_x, steer_y + bar_height), 1)
@@ -452,13 +478,17 @@ def eval_genomes(genomes, config):
         
     clock = pygame.time.Clock()
     start_time = pygame.time.get_ticks()
+    
+    # Camera variables
+    cam_x = 0
+    cam_y = 0
+    
     run = True
     
     while run:
         if manual_reset:
             run = False
         
-        # Max time 10 minutes (plenty for long laps)
         if (pygame.time.get_ticks() - start_time) > 600000:
             run = False
 
@@ -470,13 +500,28 @@ def eval_genomes(genomes, config):
                 if event.key == pygame.K_i:
                     show_telemetry = not show_telemetry
 
-        SCREEN.blit(TRACK, (TRACK_X_OFFSET, 0))
-        pygame.draw.rect(SCREEN, COLOR_UI_BG, (0, 0, UI_WIDTH, SCREEN_HEIGHT))
-
+        # 1. Update Cars
         alive_cars = [c.sprite for c in cars if c.sprite.alive]
         leader = None
         if alive_cars:
             leader = max(alive_cars, key=lambda c: c.distance_travelled)
+
+        # 2. Camera Update (Smooth follow)
+        if leader:
+            # Target is to center the leader in the GAME AREA (Right side of screen)
+            # The game area starts at UI_WIDTH and ends at SCREEN_WIDTH
+            game_center_x = UI_WIDTH + (GAME_WIDTH / 2)
+            game_center_y = SCREEN_HEIGHT / 2
+            
+            target_cam_x = leader.rect.centerx - game_center_x
+            target_cam_y = leader.rect.centery - game_center_y
+            
+            # Linear Interpolation (Lerp) for smoothness
+            cam_x += (target_cam_x - cam_x) * CAMERA_SMOOTHING
+            cam_y += (target_cam_y - cam_y) * CAMERA_SMOOTHING
+        
+        # Clamp camera so we don't see too much black void (Optional)
+        # For now, we allow free movement to ensure leader is always centered
 
         for i, car_group in enumerate(cars):
             car = car_group.sprite
@@ -504,12 +549,63 @@ def eval_genomes(genomes, config):
             is_leader = (car == leader)
             car.update(is_leader=is_leader)
 
-            # Fitness
             genomes[i][1].fitness += car.speed * 0.1 
             genomes[i][1].fitness -= abs(car.target_steer - car.current_steer) * 1.5
 
-            car_group.draw(SCREEN)
+        # 3. DRAWING (SCROLLING WORLD)
+        
+        # Clear screen
+        SCREEN.fill((20, 20, 20)) # Dark Grey background
+        
+        # Define the visible Game Area Rect
+        game_view_rect = pygame.Rect(UI_WIDTH, 0, GAME_WIDTH, SCREEN_HEIGHT)
+        
+        # Set clipping so drawing doesn't spill into the UI panel
+        SCREEN.set_clip(game_view_rect)
+        
+        # Draw Track (Shifted by camera)
+        SCREEN.blit(TRACK, (0 - cam_x, 0 - cam_y))
+        
+        # Draw Cars (Shifted by camera)
+        for i, car_group in enumerate(cars):
+            car = car_group.sprite
+            if car.alive:
+                # Manual drawing to apply offset
+                # car.image is the rotated sprite
+                # car.rect is the position in WORLD coordinates
+                
+                draw_pos = (car.rect.x - cam_x, car.rect.y - cam_y)
+                SCREEN.blit(car.image, draw_pos)
+                
+                # Draw Leader Radar (Shifted)
+                if car == leader:
+                    for r_data in car.radars:
+                        # r_data = [angle, dist, (world_x, world_y)]
+                        # We need the 3rd element (endpoint) from radar()
+                        if len(r_data) >= 3:
+                            end_pt = r_data[2]
+                            start_pt = car.rect.center
+                            
+                            adj_start = (start_pt[0] - cam_x, start_pt[1] - cam_y)
+                            adj_end = (end_pt[0] - cam_x, end_pt[1] - cam_y)
+                            
+                            pygame.draw.line(SCREEN, (255, 255, 255), adj_start, adj_end, 1)
+                            pygame.draw.circle(SCREEN, (0, 255, 0), (int(adj_end[0]), int(adj_end[1])), 3)
 
+        # Reset clipping to draw UI
+        SCREEN.set_clip(None)
+        
+        # Draw UI Background (Left Panel)
+        pygame.draw.rect(SCREEN, COLOR_UI_BG, (0, 0, UI_WIDTH, SCREEN_HEIGHT))
+        pygame.draw.line(SCREEN, (50, 50, 50), (UI_WIDTH, 0), (UI_WIDTH, SCREEN_HEIGHT), 2)
+
+        # Draw Overlays
+        draw_f1_leaderboard(SCREEN, cars)
+        if show_telemetry:
+            draw_telemetry_panel(SCREEN, cars)
+        draw_ui_buttons(SCREEN)
+
+        # Check Laps
         for i, car_group in enumerate(cars):
             car = car_group.sprite
             genome = genomes[i][1]
@@ -520,11 +616,6 @@ def eval_genomes(genomes, config):
                 if lap_seconds < 25: lap_bonus += 1000 
                 genome.fitness += lap_bonus
                 car.lap_completed = False
-                    
-        draw_f1_leaderboard(SCREEN, cars)
-        if show_telemetry:
-            draw_telemetry_panel(SCREEN, cars)
-        draw_ui_buttons(SCREEN)
 
         pygame.display.update()
         clock.tick(60)
