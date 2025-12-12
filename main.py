@@ -40,7 +40,7 @@ scaled_width = 0
 scaled_height = 0
 original_width = 0
 original_height = 0
-CURRENT_TRACK_FILE = "track.png" # Default
+CURRENT_TRACK_FILE = "track2.png" # Default
 
 def load_track_asset(filename):
     """Loads and scales the track, updating global variables."""
@@ -49,7 +49,7 @@ def load_track_asset(filename):
     path = os.path.join("map", filename)
     if not os.path.exists(path):
         print(f"Warning: {filename} not found, defaulting to track.png")
-        path = os.path.join("map", "track.png")
+        path = os.path.join("map", "track2.png")
         filename = "track.png"
 
     try:
@@ -72,7 +72,7 @@ def load_track_asset(filename):
     TRACK = pygame.transform.scale(temp_track, (scaled_width, scaled_height))
 
 # Initial Load
-load_track_asset("track.png")
+load_track_asset("track2.png")
 
 # Fonts
 try:
@@ -310,12 +310,22 @@ class Car(pygame.sprite.Sprite):
         self.original_image = pygame.transform.scale(self.original_image, (int(self.original_image.get_width() * car_scale), int(self.original_image.get_height() * car_scale)))
         self.image = self.original_image
         
-        # Start Pos adjusted for scaling ratio relative to original designed track
-        self.start_pos = (490 * (scaled_width / original_width), 820 * (scaled_height / original_height))
+        # --- FIXED START POSITION LOGIC ---
+        is_new_track = (CURRENT_TRACK_FILE == "track2.png" or original_width == 1792)
+        
+        if is_new_track:
+            raw_x, raw_y = 1427, 1263
+            start_angle = 0 
+        else:
+            raw_x, raw_y = 490, 820
+            start_angle = 0
+
+        self.start_pos = (raw_x * (scaled_width / original_width), 
+                          raw_y * (scaled_height / original_height))
         
         self.rect = self.image.get_rect(center=self.start_pos)
         self.vel_vector = pygame.math.Vector2(0.8, 0)
-        self.angle = 0
+        self.angle = start_angle
         self.rotation_vel = 7 * (ZOOM_FACTOR * 0.8) 
         self.alive = True
         self.radars = []
@@ -346,7 +356,6 @@ class Car(pygame.sprite.Sprite):
     def update(self, is_leader=False):
         self.time_alive += 1
         
-        # Auto Launch (First 0.5s)
         if self.time_alive < 30:
             self.target_accel = 1.0
             self.target_brake = 0.0
@@ -365,7 +374,6 @@ class Car(pygame.sprite.Sprite):
             
         self.collision()
         
-        # Rules
         if self.time_alive > 240 and self.speed < 0.5: self.alive = False
         if abs(self.current_steer) > 0.8 and self.speed < 3.0 and self.time_alive > 120: self.alive = False
             
@@ -430,11 +438,39 @@ class Car(pygame.sprite.Sprite):
                     int(self.rect.center[1] - math.sin(math.radians(self.angle - 18)) * length)]
 
         max_w, max_h = TRACK.get_width(), TRACK.get_height()
+        is_new_track = (CURRENT_TRACK_FILE == "track2.png" or original_width == 1792)
+
         def is_collision(pt):
             if pt[0] < 0 or pt[0] >= max_w or pt[1] < 0 or pt[1] >= max_h: return True
             try:
-                # Assuming Green (2, 105, 31) is tarmac/safe area
-                return TRACK.get_at(pt) == pygame.Color(2, 105, 31, 255)
+                pixel_color = TRACK.get_at(pt)
+                
+                if is_new_track:
+                    r, g, b, a = pixel_color
+                    '''
+                    This is for the collision detection logic
+                    where the give colors are considered as off-track.
+                    You can modify these color checks to fit your custom track design.
+                    add pixel_color checks as needed.
+                    add the conditions as needed
+                    '''
+                    # 1. Check for Specific Yellow Wall
+                    if pixel_color == (247, 255, 42, 255):
+                        return True
+                    if pixel_color == (131,145,60,255) or pixel_color == (228,205,163,255):
+                        return True
+                        
+                    # 2. Check for Grass (Green dominant)
+                    if (g > r + 30 and g > b + 30):
+                        return True
+                        
+                    # 3. Check for Buildings (Blue dominant)
+                    if (b > r + 30 and b > g + 30):
+                        return True
+                        
+                    return False
+                else:
+                    return pixel_color == pygame.Color(2, 105, 31, 255)
             except: return True
 
         if is_collision(right_pt) or is_collision(left_pt):
@@ -452,11 +488,41 @@ class Car(pygame.sprite.Sprite):
         x = int(self.rect.center[0])
         y = int(self.rect.center[1])
         max_w, max_h = TRACK.get_width(), TRACK.get_height()
+        is_new_track = (CURRENT_TRACK_FILE == "track2.png" or original_width == 1792)
 
         while length < 300 * self.scale:
             if x < 0 or x >= max_w or y < 0 or y >= max_h: break
             try:
-                if TRACK.get_at((x, y)) == pygame.Color(2, 105, 31, 255): break
+                pixel_color = TRACK.get_at((x, y))
+                is_unsafe = False
+                
+                if is_new_track:
+                    r, g, b, a = pixel_color
+                    
+                    
+                    '''
+                    This is the place to change the 
+                    track color specifications
+                    so that the raders can works perfectly
+                    with custom tracks.
+                    '''
+                    # 1. Check for Specific Yellow Wall
+                    if pixel_color == (247, 255, 42, 255):
+                        is_unsafe = True
+                    if pixel_color == (131,145,60,255) or pixel_color == (228,205,163,255):
+                        is_unsafe = True
+                    # 2. Check for Grass
+                    elif (g > r + 30 and g > b + 30):
+                         is_unsafe = True
+                    # 3. Check for Buildings
+                    elif (b > r + 30 and b > g + 30):
+                         is_unsafe = True
+
+                else:
+                    if pixel_color == pygame.Color(2, 105, 31, 255):
+                        is_unsafe = True
+                
+                if is_unsafe: break
             except IndexError: break
             length += 1
             x = int(self.rect.center[0] + math.cos(math.radians(self.angle + radar_angle)) * length)
@@ -466,12 +532,12 @@ class Car(pygame.sprite.Sprite):
         self.radars.append([radar_angle, dist, (x, y)])
 
     def data(self):
-            input_data = [0, 0, 0, 0, 0, 0]
-            for i, radar in enumerate(self.radars):
-                normalized_dist = int(radar[1]) / (300.0 * self.scale)
-                input_data[i] = 1.0 - max(0.0, min(1.0, normalized_dist))
-            input_data[5] = self.speed / self.max_speed
-            return input_data
+        input_data = [0, 0, 0, 0, 0, 0]
+        for i, radar in enumerate(self.radars):
+            normalized_dist = int(radar[1]) / (300.0 * self.scale)
+            input_data[i] = 1.0 - max(0.0, min(1.0, normalized_dist))
+        input_data[5] = self.speed / self.max_speed
+        return input_data
 
 def draw_f1_leaderboard(screen, cars):
     COLOR_HEADER_BG = (215, 80, 65)
