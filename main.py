@@ -341,12 +341,18 @@ class Car(pygame.sprite.Sprite):
         self.radars.append([radar_angle, dist, (x, y)])
 
     def data(self):
-        input = [0, 0, 0, 0, 0]
-        for i, radar in enumerate(self.radars):
-            # 1.0 = Wall is touching, 0.0 = Far away
-            normalized_dist = int(radar[1]) / (300.0 * self.scale)
-            input[i] = 1.0 - max(0.0, min(1.0, normalized_dist))
-        return input
+            input_data = [0, 0, 0, 0, 0, 0]
+            
+            # 1. Radar Sensors (Inputs 0-4)
+            for i, radar in enumerate(self.radars):
+                normalized_dist = int(radar[1]) / (300.0 * self.scale)
+                input_data[i] = 1.0 - max(0.0, min(1.0, normalized_dist))
+                
+            # 2. Current Speed (Input 5)
+            # Normalize speed (0 to 1 based on max_speed)
+            input_data[5] = self.speed / self.max_speed
+            
+            return input_data
 
 def draw_f1_leaderboard(screen, cars):
     # --- COLORS & LAYOUT ---
@@ -517,7 +523,7 @@ def draw_chase_cam(screen, leader):
     draw_rounded_button(screen, (220, 120, 0), RESET_BUTTON_RECT, label_reset)
 
 def draw_neural_network(screen, genome, config, car, inputs, outputs):
-    # --- CONFIG & COLORS ---
+    # ... (Keep Config & Colors section the same) ...
     panel_w = 520
     panel_h = 300
     panel_x = SCREEN_WIDTH - panel_w - 20 
@@ -531,27 +537,25 @@ def draw_neural_network(screen, genome, config, car, inputs, outputs):
     COLOR_BAR_BG = (50, 55, 60)
     COLOR_YELLOW = (240, 220, 80)
     
-    # Draw Background
     s = pygame.Surface((panel_w, panel_h))
     s.set_alpha(240)
     s.fill(COLOR_BG)
     screen.blit(s, (panel_x, panel_y))
     pygame.draw.rect(screen, (200, 200, 200), (panel_x, panel_y, panel_w, panel_h), 1)
 
-    # Header
     header_text = FONT_HEADER.render(f"NEURAL NETWORK - Car {car.car_id}", True, (255, 255, 255))
     screen.blit(header_text, (panel_x + 15, panel_y + 10))
 
-    # --- SETUP NODES ---
     graph_width = 240
     divider_x = panel_x + graph_width
     pygame.draw.line(screen, COLOR_DIVIDER, (divider_x, panel_y + 40), (divider_x, panel_y + panel_h - 20), 2)
     
-    input_nodes = [-1, -2, -3, -4, -5]
+    # CHANGE: Added -6 for the speed input
+    input_nodes = [-1, -2, -3, -4, -5, -6] 
     output_nodes = [0, 1, 2, 3]
     
     node_positions = {}
-    node_values = {} # Store values to check if line is "working"
+    node_values = {} 
     layer_h = panel_h - 60
     
     # Inputs
@@ -560,16 +564,18 @@ def draw_neural_network(screen, genome, config, car, inputs, outputs):
         y = panel_y + 60 + (i * (layer_h / len(input_nodes)))
         node_positions[node_key] = (int(x), int(y))
         
-        # Store Value
         val = inputs[i] if i < len(inputs) else 0.0
         node_values[node_key] = val
 
-        label = FONT_NET.render(f"S{i}", True, (150, 150, 150))
+        # Label: S0-S4 are sensors, S5 is Speed
+        lbl = f"S{i}" if i < 5 else "SPD"
+        label = FONT_NET.render(lbl, True, (150, 150, 150))
         screen.blit(label, (x - 25, y - 5))
         
         color = COLOR_ACCENT_GREEN if val > 0.1 else (80, 80, 80)
         pygame.draw.circle(screen, color, (int(x), int(y)), 6)
 
+    # ... (Keep the rest of the function exactly the same: Outputs, Connections, Telemetry) ...
     # Outputs
     output_labels = ["L", "R", "B", "G"]
     for i, node_key in enumerate(output_nodes):
@@ -584,72 +590,52 @@ def draw_neural_network(screen, genome, config, car, inputs, outputs):
         color = COLOR_ACCENT_GREEN if val > 0.5 else (80, 80, 80)
         pygame.draw.circle(screen, color, (int(x), int(y)), 6)
 
-    # --- DRAW CONNECTIONS (WORKING ONLY) ---
+    # Connections
     for cg in genome.connections.values():
         if not cg.enabled: continue
-        
         in_node, out_node = cg.key
-        
-        # LOGIC: Check if the source node has an active value
-        # If it's an input node and value is near 0, don't draw the line.
-        # If it's a hidden node (not in our map), assume it's working (1.0).
         input_val = node_values.get(in_node, 1.0)
-        
-        if input_val < 0.01: 
-            continue # Skip drawing if signal is dead
+        if input_val < 0.01: continue 
 
         if in_node in node_positions and out_node in node_positions:
             start = node_positions[in_node]
             end = node_positions[out_node]
             color = COLOR_ACCENT_GREEN if cg.weight > 0 else COLOR_ACCENT_RED
-            
-            # Make the line slightly thinner for a cleaner look
             width = max(1, min(2, int(abs(cg.weight))))
             pygame.draw.line(screen, color, start, end, width)
 
-    # --- RIGHT SIDE: TELEMETRY ---
+    # Telemetry
     bar_start_x = divider_x + 20
     current_y = panel_y + 50
-    
-    # Vision Sensors
     screen.blit(FONT_MAIN.render("Vision Sensors", True, (255, 255, 255)), (bar_start_x, current_y))
     current_y += 25
-    
     angles = ["-60°", "-30°", "0°", "30°", "60°"]
     for i, angle_text in enumerate(angles):
         screen.blit(FONT_NET.render(angle_text, True, (180, 180, 180)), (bar_start_x, current_y + 2))
         bg_rect = pygame.Rect(bar_start_x + 40, current_y + 5, 140, 8)
         pygame.draw.rect(screen, COLOR_BAR_BG, bg_rect, border_radius=4)
-        
         val = inputs[i] if i < len(inputs) else 0
         fill_width = int(val * 140)
         if fill_width > 0:
             pygame.draw.rect(screen, COLOR_ACCENT_GREEN, (bar_start_x + 40, current_y + 5, fill_width, 8), border_radius=4)
         current_y += 18
-
-    # Controls
     current_y += 10
     screen.blit(FONT_MAIN.render("Controls", True, (255, 255, 255)), (bar_start_x, current_y))
     current_y += 25
-    
     steer_val = (car.target_steer + 1) / 2
     controls = [
         ("STR", steer_val, COLOR_ACCENT_GREEN),
         ("GAS", car.target_accel, COLOR_ACCENT_GREEN),
         ("BRK", car.target_brake, COLOR_ACCENT_RED),
     ]
-    
     for label, val, col in controls:
         screen.blit(FONT_NET.render(label, True, (180, 180, 180)), (bar_start_x, current_y + 2))
         bg_rect = pygame.Rect(bar_start_x + 40, current_y + 5, 140, 8)
         pygame.draw.rect(screen, COLOR_BAR_BG, bg_rect, border_radius=4)
-        
         fill_width = int(max(0, min(1, val)) * 140)
         if fill_width > 0:
             pygame.draw.rect(screen, col, (bar_start_x + 40, current_y + 5, fill_width, 8), border_radius=4)
         current_y += 18
-        
-    # Speed
     screen.blit(FONT_NET.render("SPD", True, (180, 180, 180)), (bar_start_x, current_y + 2))
     bg_rect = pygame.Rect(bar_start_x + 40, current_y + 5, 140, 8)
     pygame.draw.rect(screen, COLOR_BAR_BG, bg_rect, border_radius=4)
@@ -685,6 +671,7 @@ def eval_genomes(genomes, config):
     
     while run:
         if manual_reset: run = False
+        # Stop generation after 10 minutes to prevent stalling
         if (pygame.time.get_ticks() - start_time) > 600000: run = False
 
         for event in pygame.event.get():
@@ -714,14 +701,23 @@ def eval_genomes(genomes, config):
             car = car_group.sprite
             if not car.alive: continue
 
+            # --- INPUT HANDLING ---
+            # Get 6 inputs (5 radars + 1 speed)
+            car_inputs = car.data()
+            
+            # Protection: If config.txt still says 5 inputs, slice the list to prevent crash
+            if len(car_inputs) > len(nets[i].input_nodes):
+                car_inputs = car_inputs[:len(nets[i].input_nodes)]
+
             if car.time_alive < 30:
+                 # Auto-drive inputs for launch
                  raw = [0, 0, 0, 0]
             else:
-                 raw = nets[i].activate(car.data())
+                 raw = nets[i].activate(car_inputs)
                  while len(raw) < 4: raw = list(raw) + [0.0]
 
             if car == leader:
-                leader_inputs = car.data()
+                leader_inputs = car_inputs
                 leader_outputs = raw
 
             if car.time_alive >= 30:
@@ -736,12 +732,22 @@ def eval_genomes(genomes, config):
             is_leader = (car == leader)
             car.update(is_leader=is_leader)
 
-            # --- SIMPLIFIED FITNESS ---
-            # Reward distance only. 
-            # Removing wiggle penalty because AI needs freedom to learn steering first.
+            # --- UPDATED FITNESS FUNCTION ---
             if math.isfinite(car.speed):
-                genomes[i][1].fitness += car.speed * 0.1 
+                # 1. Reward Distance (Basic Survival)
+                genomes[i][1].fitness += car.speed * 0.1
+                
+                # 2. Reward High Speed Aggressively (Squared Speed)
+                # This makes 20 speed worth 4x more than 10 speed.
+                if car.speed > 5:
+                    genomes[i][1].fitness += (car.speed ** 1.5) * 0.05
 
+            # Punish for going too slow after launch
+            if car.time_alive > 100 and car.speed < 2:
+                genomes[i][1].fitness -= 2 # Penalty
+                car.alive = False
+
+        # Camera Logic
         if leader:
             game_center_x = UI_WIDTH + (GAME_WIDTH / 2)
             game_center_y = SCREEN_HEIGHT / 2
@@ -750,6 +756,7 @@ def eval_genomes(genomes, config):
             cam_x += (target_cam_x - cam_x) * CAMERA_SMOOTHING
             cam_y += (target_cam_y - cam_y) * CAMERA_SMOOTHING
 
+        # Drawing
         SCREEN.fill((20, 20, 20))
         game_view_rect = pygame.Rect(UI_WIDTH, 0, GAME_WIDTH, SCREEN_HEIGHT)
         SCREEN.set_clip(game_view_rect)
@@ -781,15 +788,28 @@ def eval_genomes(genomes, config):
             draw_neural_network(SCREEN, leader_genome, config, leader, leader_inputs, leader_outputs)
         draw_ui_buttons(SCREEN)
 
+        # --- LAP COMPLETION & REWARD ---
         for i, car_group in enumerate(cars):
             car = car_group.sprite
             genome = genomes[i][1]
             if car.lap_completed and car.lap_times:
                 last_lap = car.lap_times[-1]      
                 lap_seconds = last_lap / 1000.0
-                lap_bonus = 2000.0 
-                if lap_seconds < 25: lap_bonus += 1000 
-                genome.fitness += lap_bonus
+                
+                # REWARD LOGIC: Inverse Time
+                # The faster the time, the higher the denominator divides, 
+                # but we want High Score = Low Time.
+                # Formula: Constant / Time
+                
+                # Base bonus for finishing
+                genome.fitness += 1000 
+                
+                # Performance Bonus
+                # Example: 30s lap = 6000/30 = 200 pts
+                # Example: 15s lap = 6000/15 = 400 pts (Double reward)
+                time_bonus = 6000 / max(1, lap_seconds) * 10 
+                genome.fitness += time_bonus
+                
                 car.lap_completed = False
 
         pygame.display.update()
