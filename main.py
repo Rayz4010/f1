@@ -98,19 +98,41 @@ def format_time(ms):
     milliseconds = int(ms % 1000)
     return f"{minutes}:{seconds:02}.{milliseconds:03}"
 
+def draw_chamfered_button(surface, color, rect, text_surf):
+    """Draws a button with chamfered (cut) corners."""
+    x, y, w, h = rect
+    chamfer = 12 # Adjust this value for larger/smaller cuts
+
+    # Define the 8 points of the chamfered rectangle
+    points = [
+        (x + chamfer, y),         # Top-left 1
+        (x + w - chamfer, y),     # Top-right 1
+        (x + w, y + chamfer),     # Top-right 2
+        (x + w, y + h - chamfer), # Bottom-right 1
+        (x + w - chamfer, y + h), # Bottom-right 2
+        (x + chamfer, y + h),     # Bottom-left 1
+        (x, y + h - chamfer),     # Bottom-left 2
+        (x, y + chamfer)          # Top-left 2
+    ]
+    
+    # Draw the filled button shape
+    pygame.draw.polygon(surface, color, points)
+    
+    # Center the text
+    text_rect = text_surf.get_rect(center=rect.center)
+    surface.blit(text_surf, text_rect)
+    
 def draw_ui_buttons(surface):
-    pygame.draw.rect(surface, EXIT_BUTTON_COLOR, EXIT_BUTTON_RECT)
-    pygame.draw.rect(surface, EXIT_BUTTON_BORDER_COLOR, EXIT_BUTTON_RECT, 2)
+    # --- EXIT BUTTON ---
+    # Using the new chamfered style with the existing red color
     label_exit = FONT_MAIN.render("Exit", True, BUTTON_TEXT_COLOR)
-    label_rect_exit = label_exit.get_rect(center=EXIT_BUTTON_RECT.center)
-    surface.blit(label_exit, label_rect_exit)
+    draw_chamfered_button(surface, EXIT_BUTTON_COLOR, EXIT_BUTTON_RECT, label_exit)
 
-    pygame.draw.rect(surface, RESET_BUTTON_COLOR, RESET_BUTTON_RECT)
-    pygame.draw.rect(surface, EXIT_BUTTON_BORDER_COLOR, RESET_BUTTON_RECT, 2)
+    # --- RESET BUTTON ---
+    # Using the new chamfered style with the existing orange color
     label_reset = FONT_MAIN.render("New Gen", True, BUTTON_TEXT_COLOR)
-    label_rect_reset = label_reset.get_rect(center=RESET_BUTTON_RECT.center)
-    surface.blit(label_reset, label_rect_reset)
-
+    draw_chamfered_button(surface, RESET_BUTTON_COLOR, RESET_BUTTON_RECT, label_reset)
+    
 def _monitor_buttons_thread():
     global manual_reset, quit_flag
     pressed = False
@@ -395,87 +417,183 @@ def draw_telemetry_panel(screen, cars):
 
 def draw_chase_cam(screen, leader):
     CAM_SIZE = 250
-    ZOOM = 2.0
+    ZOOM = 1.8
     VIEW_SIZE = CAM_SIZE / ZOOM
-    cam_x = 20
-    cam_y = SCREEN_HEIGHT - CAM_SIZE - 20
+    
+    # --- POSITION UPDATE: TOP RIGHT ---
+    # Calculate X to be on the right side (Screen Width - Camera Width - Padding)
+    cam_x = SCREEN_WIDTH - CAM_SIZE - 20
+    
+    # Calculate Y to be at the top, but below the buttons (Button Y + Height + Padding)
+    # Buttons are at BUTTON_PADDING (20) + BUTTON_HEIGHT (48) = 68px bottom
+    cam_y = BUTTON_PADDING + BUTTON_HEIGHT + 20 
+    # ----------------------------------
+
     lens = pygame.Surface((int(VIEW_SIZE), int(VIEW_SIZE)))
     lens.fill((30, 30, 30))
+    
     offset_x = -leader.rect.centerx + (VIEW_SIZE / 2)
     offset_y = -leader.rect.centery + (VIEW_SIZE / 2)
+    
     lens.blit(TRACK, (offset_x, offset_y))
+    
     car_draw_pos = (int(VIEW_SIZE/2 - leader.image.get_width()/2), int(VIEW_SIZE/2 - leader.image.get_height()/2))
     lens.blit(leader.image, car_draw_pos)
+    
     final_view = pygame.transform.scale(lens, (int(CAM_SIZE), int(CAM_SIZE)))
+    
+    # Draw border
     pygame.draw.rect(screen, (255, 255, 255), (cam_x - 2, cam_y - 2, CAM_SIZE + 4, CAM_SIZE + 4), 2)
+    
     screen.blit(final_view, (cam_x, cam_y))
-    screen.blit(FONT_MAIN.render("CHASE CAM", True, (255, 255, 255)), (cam_x, cam_y - 25))
+    
+    # Draw Label (Moved inside the box at the bottom, or just above it)
+    # Let's put it slightly above the camera box
+    screen.blit(FONT_MAIN.render("CHASE CAM", True, (255, 255, 255)), (cam_x, cam_y - 20))
 
-def draw_neural_network(screen, genome, config, inputs, outputs):
-    panel_w = 400 
-    panel_h = 260
-    panel_x = SCREEN_WIDTH - panel_w - 20
+def draw_neural_network(screen, genome, config, car, inputs, outputs):
+    # --- CONFIG & COLORS ---
+    panel_w = 520
+    panel_h = 300
+    panel_x = SCREEN_WIDTH - panel_w - 20 
     panel_y = SCREEN_HEIGHT - panel_h - 20
+    
+    # Colors
+    COLOR_BG = (30, 33, 40)
+    COLOR_DIVIDER = (60, 65, 75)
+    COLOR_ACCENT_GREEN = (80, 220, 120)
+    COLOR_ACCENT_RED = (220, 80, 80)
+    COLOR_BAR_BG = (50, 55, 60)
+    COLOR_YELLOW = (240, 220, 80)
+    
+    # Draw Background
     s = pygame.Surface((panel_w, panel_h))
-    s.set_alpha(230)
-    s.fill((30, 30, 30))
+    s.set_alpha(240)
+    s.fill(COLOR_BG)
     screen.blit(s, (panel_x, panel_y))
-    pygame.draw.rect(screen, (255, 255, 255), (panel_x, panel_y, panel_w, panel_h), 2)
-    screen.blit(FONT_MAIN.render("NEURAL NETWORK ", True, (255, 255, 255)), (panel_x + 10, panel_y + 10))
+    pygame.draw.rect(screen, (200, 200, 200), (panel_x, panel_y, panel_w, panel_h), 1)
 
-    layer_w = panel_w - 40
-    layer_h = panel_h - 40
-    node_radius = 6
+    # Header
+    header_text = FONT_HEADER.render(f"NEURAL NETWORK - Car {car.car_id}", True, (255, 255, 255))
+    screen.blit(header_text, (panel_x + 15, panel_y + 10))
+
+    # --- SETUP NODES ---
+    graph_width = 240
+    divider_x = panel_x + graph_width
+    pygame.draw.line(screen, COLOR_DIVIDER, (divider_x, panel_y + 40), (divider_x, panel_y + panel_h - 20), 2)
     
     input_nodes = [-1, -2, -3, -4, -5]
     output_nodes = [0, 1, 2, 3]
-    hidden_nodes = [k for k in genome.nodes.keys() if k not in input_nodes and k not in output_nodes]
     
     node_positions = {}
+    node_values = {} # Store values to check if line is "working"
+    layer_h = panel_h - 60
     
     # Inputs
     for i, node_key in enumerate(input_nodes):
-        x = panel_x + 30
-        y = panel_y + 40 + (i * (layer_h / len(input_nodes)))
+        x = panel_x + 40
+        y = panel_y + 60 + (i * (layer_h / len(input_nodes)))
         node_positions[node_key] = (int(x), int(y))
+        
+        # Store Value
         val = inputs[i] if i < len(inputs) else 0.0
-        color_intensity = min(255, int(val * 255))
-        color = (color_intensity, 255, color_intensity) if val > 0.1 else (50, 50, 50)
-        pygame.draw.circle(screen, color, (int(x), int(y)), node_radius)
-        screen.blit(FONT_NET.render(f"R{i}", True, (200, 200, 200)), (x - 20, y - 5))
+        node_values[node_key] = val
 
-    # Hidden
-    if hidden_nodes:
-        # Just simple layout if hidden nodes appear (unlikely with this config)
-        for i, node_key in enumerate(hidden_nodes):
-            x = panel_x + (panel_w / 2)
-            y = panel_y + 40 + (i * (layer_h / len(hidden_nodes)))
-            node_positions[node_key] = (int(x), int(y))
-            pygame.draw.circle(screen, (150, 150, 200), (int(x), int(y)), node_radius)
+        label = FONT_NET.render(f"S{i}", True, (150, 150, 150))
+        screen.blit(label, (x - 25, y - 5))
+        
+        color = COLOR_ACCENT_GREEN if val > 0.1 else (80, 80, 80)
+        pygame.draw.circle(screen, color, (int(x), int(y)), 6)
 
     # Outputs
-    output_labels = ["L", "R", "Brk", "Gas"]
+    output_labels = ["L", "R", "B", "G"]
     for i, node_key in enumerate(output_nodes):
-        x = panel_x + panel_w - 30
-        y = panel_y + 50 + (i * (layer_h / len(output_nodes)))
+        x = divider_x - 40
+        y = panel_y + 80 + (i * (layer_h / len(output_nodes)))
         node_positions[node_key] = (int(x), int(y))
-        val = outputs[i] if i < len(outputs) else 0.0
-        val_norm = (val + 1) / 2
-        color_intensity = min(255, int(val_norm * 255))
-        color = (255, color_intensity, color_intensity) if val > 0.5 else (50, 50, 50)
-        pygame.draw.circle(screen, color, (int(x), int(y)), node_radius)
-        screen.blit(FONT_NET.render(output_labels[i], True, (200, 200, 200)), (x + 10, y - 5))
+        
+        label = FONT_NET.render(output_labels[i], True, (150, 150, 150))
+        screen.blit(label, (x + 15, y - 5))
+        
+        val = outputs[i] if i < len(outputs) else 0
+        color = COLOR_ACCENT_GREEN if val > 0.5 else (80, 80, 80)
+        pygame.draw.circle(screen, color, (int(x), int(y)), 6)
 
+    # --- DRAW CONNECTIONS (WORKING ONLY) ---
     for cg in genome.connections.values():
         if not cg.enabled: continue
+        
         in_node, out_node = cg.key
+        
+        # LOGIC: Check if the source node has an active value
+        # If it's an input node and value is near 0, don't draw the line.
+        # If it's a hidden node (not in our map), assume it's working (1.0).
+        input_val = node_values.get(in_node, 1.0)
+        
+        if input_val < 0.01: 
+            continue # Skip drawing if signal is dead
+
         if in_node in node_positions and out_node in node_positions:
             start = node_positions[in_node]
             end = node_positions[out_node]
-            color = (0, 255, 0) if cg.weight > 0 else (255, 0, 0)
-            width = max(1, int(abs(cg.weight)))
+            color = COLOR_ACCENT_GREEN if cg.weight > 0 else COLOR_ACCENT_RED
+            
+            # Make the line slightly thinner for a cleaner look
+            width = max(1, min(2, int(abs(cg.weight))))
             pygame.draw.line(screen, color, start, end, width)
 
+    # --- RIGHT SIDE: TELEMETRY ---
+    bar_start_x = divider_x + 20
+    current_y = panel_y + 50
+    
+    # Vision Sensors
+    screen.blit(FONT_MAIN.render("Vision Sensors", True, (255, 255, 255)), (bar_start_x, current_y))
+    current_y += 25
+    
+    angles = ["-60°", "-30°", "0°", "30°", "60°"]
+    for i, angle_text in enumerate(angles):
+        screen.blit(FONT_NET.render(angle_text, True, (180, 180, 180)), (bar_start_x, current_y + 2))
+        bg_rect = pygame.Rect(bar_start_x + 40, current_y + 5, 140, 8)
+        pygame.draw.rect(screen, COLOR_BAR_BG, bg_rect, border_radius=4)
+        
+        val = inputs[i] if i < len(inputs) else 0
+        fill_width = int(val * 140)
+        if fill_width > 0:
+            pygame.draw.rect(screen, COLOR_ACCENT_GREEN, (bar_start_x + 40, current_y + 5, fill_width, 8), border_radius=4)
+        current_y += 18
+
+    # Controls
+    current_y += 10
+    screen.blit(FONT_MAIN.render("Controls", True, (255, 255, 255)), (bar_start_x, current_y))
+    current_y += 25
+    
+    steer_val = (car.target_steer + 1) / 2
+    controls = [
+        ("STR", steer_val, COLOR_ACCENT_GREEN),
+        ("GAS", car.target_accel, COLOR_ACCENT_GREEN),
+        ("BRK", car.target_brake, COLOR_ACCENT_RED),
+    ]
+    
+    for label, val, col in controls:
+        screen.blit(FONT_NET.render(label, True, (180, 180, 180)), (bar_start_x, current_y + 2))
+        bg_rect = pygame.Rect(bar_start_x + 40, current_y + 5, 140, 8)
+        pygame.draw.rect(screen, COLOR_BAR_BG, bg_rect, border_radius=4)
+        
+        fill_width = int(max(0, min(1, val)) * 140)
+        if fill_width > 0:
+            pygame.draw.rect(screen, col, (bar_start_x + 40, current_y + 5, fill_width, 8), border_radius=4)
+        current_y += 18
+        
+    # Speed
+    screen.blit(FONT_NET.render("SPD", True, (180, 180, 180)), (bar_start_x, current_y + 2))
+    bg_rect = pygame.Rect(bar_start_x + 40, current_y + 5, 140, 8)
+    pygame.draw.rect(screen, COLOR_BAR_BG, bg_rect, border_radius=4)
+    speed_norm = car.speed / car.max_speed
+    fill_width = int(max(0, min(1, speed_norm)) * 140)
+    if fill_width > 0:
+        pygame.draw.rect(screen, COLOR_YELLOW, (bar_start_x + 40, current_y + 5, fill_width, 8), border_radius=4)
+        pygame.draw.circle(screen, COLOR_YELLOW, (bar_start_x + 40 + fill_width, current_y + 9), 5)
+        
 def eval_genomes(genomes, config):
     global quit_flag, BEST_OVERALL_LAP, show_telemetry, manual_reset, show_network
     manual_reset = False 
@@ -595,7 +713,7 @@ def eval_genomes(genomes, config):
         if leader: draw_chase_cam(SCREEN, leader)
         if show_telemetry: draw_telemetry_panel(SCREEN, cars)
         if show_network and leader_genome:
-            draw_neural_network(SCREEN, leader_genome, config, leader_inputs, leader_outputs)
+            draw_neural_network(SCREEN, leader_genome, config, leader, leader_inputs, leader_outputs)
         draw_ui_buttons(SCREEN)
 
         for i, car_group in enumerate(cars):
