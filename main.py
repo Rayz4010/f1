@@ -5,6 +5,7 @@ import sys
 import threading
 import time
 import traceback
+import glob # Added for Map scanning
 
 # --- PYTHON 3.11+ COMPATIBILITY FIX ---
 import inspect
@@ -33,34 +34,57 @@ TRACK_X_OFFSET = UI_WIDTH
 ZOOM_FACTOR = 2.5 
 CAMERA_SMOOTHING = 0.1 
 
-# Load Assets
-try:
-    TRACK = pygame.image.load(os.path.join("assets", "track.png")).convert()
-except FileNotFoundError:
-    print("Error: assets/track.png not found. Please ensure the file exists.")
-    pygame.quit()
-    sys.exit()
+# --- GLOBAL ASSETS ---
+TRACK = None
+scaled_width = 0
+scaled_height = 0
+original_width = 0
+original_height = 0
+CURRENT_TRACK_FILE = "track.png" # Default
 
-original_width, original_height = TRACK.get_width(), TRACK.get_height()
+def load_track_asset(filename):
+    """Loads and scales the track, updating global variables."""
+    global TRACK, scaled_width, scaled_height, original_width, original_height, scale, CURRENT_TRACK_FILE
+    
+    path = os.path.join("map", filename)
+    if not os.path.exists(path):
+        print(f"Warning: {filename} not found, defaulting to track.png")
+        path = os.path.join("map", "track.png")
+        filename = "track.png"
 
-# Scale Track
-base_scale_x = GAME_WIDTH / original_width
-base_scale_y = SCREEN_HEIGHT / original_height
-scale = min(base_scale_x, base_scale_y) * ZOOM_FACTOR
+    try:
+        temp_track = pygame.image.load(path).convert()
+    except FileNotFoundError:
+        print("Error: map/track.png not found. Please ensure the file exists.")
+        pygame.quit()
+        sys.exit()
 
-scaled_width = int(original_width * scale)
-scaled_height = int(original_height * scale)
-TRACK = pygame.transform.scale(TRACK, (scaled_width, scaled_height))
+    CURRENT_TRACK_FILE = filename
+    original_width, original_height = temp_track.get_width(), temp_track.get_height()
+
+    # Scale Track
+    base_scale_x = GAME_WIDTH / original_width
+    base_scale_y = SCREEN_HEIGHT / original_height
+    scale = min(base_scale_x, base_scale_y) * ZOOM_FACTOR
+
+    scaled_width = int(original_width * scale)
+    scaled_height = int(original_height * scale)
+    TRACK = pygame.transform.scale(temp_track, (scaled_width, scaled_height))
+
+# Initial Load
+load_track_asset("track.png")
 
 # Fonts
 try:
     FONT_MAIN = pygame.font.SysFont("Consolas", int(18), bold=True)
     FONT_HEADER = pygame.font.SysFont("Arial", int(20), bold=True)
+    FONT_MENU = pygame.font.SysFont("Arial", 40, bold=True) # New Font for Menu
     FONT_NET = pygame.font.SysFont("Arial", 12)
     FONT_ERROR = pygame.font.SysFont("Arial", 24, bold=True)
 except:
     FONT_MAIN = pygame.font.SysFont(None, 22)
     FONT_HEADER = pygame.font.SysFont(None, 24)
+    FONT_MENU = pygame.font.SysFont(None, 50)
     FONT_NET = pygame.font.SysFont(None, 14)
     FONT_ERROR = pygame.font.SysFont(None, 30)
 
@@ -100,50 +124,27 @@ def format_time(ms):
 
 def draw_rounded_button(surface, color, rect, text_surf):
     """Draws a button with rounded corners."""
-    # Draw the rounded rectangle
-    # border_radius=8 gives it the soft roundness. 
-    # Use border_radius=int(rect.height/2) for a full "pill" shape.
     pygame.draw.rect(surface, color, rect, border_radius=12)
-    
-    # Optional: Draw a thin border to make it pop
     pygame.draw.rect(surface, (255, 255, 255), rect, 2, border_radius=8)
-    
-    # Center the text
     text_rect = text_surf.get_rect(center=rect.center)
     surface.blit(text_surf, text_rect)
     
 def draw_chamfered_button(surface, color, rect, text_surf):
     """Draws a button with chamfered (cut) corners."""
     x, y, w, h = rect
-    chamfer = 12 # Adjust this value for larger/smaller cuts
-
-    # Define the 8 points of the chamfered rectangle
+    chamfer = 12 
     points = [
-        (x + chamfer, y),         # Top-left 1
-        (x + w - chamfer, y),     # Top-right 1
-        (x + w, y + chamfer),     # Top-right 2
-        (x + w, y + h - chamfer), # Bottom-right 1
-        (x + w - chamfer, y + h), # Bottom-right 2
-        (x + chamfer, y + h),     # Bottom-left 1
-        (x, y + h - chamfer),     # Bottom-left 2
-        (x, y + chamfer)          # Top-left 2
+        (x + chamfer, y), (x + w - chamfer, y), (x + w, y + chamfer),
+        (x + w, y + h - chamfer), (x + w - chamfer, y + h), (x + chamfer, y + h),
+        (x, y + h - chamfer), (x, y + chamfer)
     ]
-    
-    # Draw the filled button shape
     pygame.draw.polygon(surface, color, points)
-    
-    # Center the text
     text_rect = text_surf.get_rect(center=rect.center)
     surface.blit(text_surf, text_rect)
     
 def draw_ui_buttons(surface):
-    # --- EXIT BUTTON ---
-    # Using the new chamfered style with the existing red color
     label_exit = FONT_MAIN.render("Exit", True, BUTTON_TEXT_COLOR)
     draw_chamfered_button(surface, EXIT_BUTTON_COLOR, EXIT_BUTTON_RECT, label_exit)
-
-    # --- RESET BUTTON ---
-    # Using the new chamfered style with the existing orange color
     label_reset = FONT_MAIN.render("Reset", True, BUTTON_TEXT_COLOR)
     draw_chamfered_button(surface, RESET_BUTTON_COLOR, RESET_BUTTON_RECT, label_reset)
     
@@ -170,6 +171,131 @@ def _monitor_buttons_thread():
 
 threading.Thread(target=_monitor_buttons_thread, daemon=True).start()
 
+# --- NEW PAUSE MENU SYSTEM ---
+def draw_centered_text(screen, text, font, color, y_offset=0):
+    surf = font.render(text, True, color)
+    rect = surf.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + y_offset))
+    screen.blit(surf, rect)
+
+def handle_pause_menu(screen):
+    global manual_reset, quit_flag
+    paused = True
+    menu_state = "main" # main, maps, instructions
+    
+    # Snapshot of screen for background
+    bg_copy = screen.copy()
+    overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+    overlay.fill((0, 0, 0))
+    overlay.set_alpha(200)
+
+    while paused:
+        # Re-draw background every frame so interactions look clean
+        screen.blit(bg_copy, (0,0))
+        screen.blit(overlay, (0,0))
+        
+        mx, my = pygame.mouse.get_pos()
+        click = False
+
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    if menu_state == "main":
+                        paused = False
+                    else:
+                        menu_state = "main"
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1:
+                    click = True
+
+        if menu_state == "main":
+            # Title
+            draw_centered_text(screen, "PAUSED", FONT_MENU, COLOR_TEXT_WHITE, -150)
+            
+            # Buttons
+            btn_w, btn_h = 300, 60
+            center_x = SCREEN_WIDTH // 2 - btn_w // 2
+            
+            # 1. Maps
+            btn_maps = pygame.Rect(center_x, SCREEN_HEIGHT // 2 - 50, btn_w, btn_h)
+            color_maps = COLOR_PURPLE if btn_maps.collidepoint((mx, my)) else (80, 80, 80)
+            draw_rounded_button(screen, color_maps, btn_maps, FONT_HEADER.render("Maps", True, COLOR_TEXT_WHITE))
+            
+            # 2. Instructions
+            btn_instr = pygame.Rect(center_x, SCREEN_HEIGHT // 2 + 30, btn_w, btn_h)
+            color_instr = COLOR_BLUE if btn_instr.collidepoint((mx, my)) else (80, 80, 80)
+            draw_rounded_button(screen, color_instr, btn_instr, FONT_HEADER.render("Instructions", True, COLOR_TEXT_WHITE))
+            
+            # 3. Exit
+            btn_exit = pygame.Rect(center_x, SCREEN_HEIGHT // 2 + 110, btn_w, btn_h)
+            color_exit = COLOR_RED if btn_exit.collidepoint((mx, my)) else (80, 80, 80)
+            draw_rounded_button(screen, color_exit, btn_exit, FONT_HEADER.render("Exit Game", True, COLOR_TEXT_WHITE))
+            
+            # 4. Resume (Small text below)
+            draw_centered_text(screen, "Press ESC to Resume", FONT_MAIN, COLOR_TEXT_GREY, 200)
+
+            if click:
+                if btn_maps.collidepoint((mx, my)): menu_state = "maps"
+                if btn_instr.collidepoint((mx, my)): menu_state = "instructions"
+                if btn_exit.collidepoint((mx, my)): 
+                    pygame.quit()
+                    sys.exit()
+
+        elif menu_state == "maps":
+            draw_centered_text(screen, "SELECT MAP", FONT_MENU, COLOR_TEXT_WHITE, -200)
+            
+            # Find map files in assets
+            map_files = glob.glob(os.path.join("map", "*.png"))
+            map_files = [os.path.basename(f) for f in map_files if "car" not in f] # Exclude car.png
+            if not map_files: map_files = ["track.png"]
+            
+            start_y = SCREEN_HEIGHT // 2 - 100
+            for i, f_name in enumerate(map_files):
+                btn_rect = pygame.Rect(SCREEN_WIDTH//2 - 150, start_y + (i * 50), 300, 40)
+                
+                # Highlight current map
+                is_current = (f_name == CURRENT_TRACK_FILE)
+                col = COLOR_GREEN if is_current else (60, 60, 60)
+                if btn_rect.collidepoint((mx, my)): col = COLOR_PURPLE
+                
+                draw_rounded_button(screen, col, btn_rect, FONT_MAIN.render(f_name, True, COLOR_TEXT_WHITE))
+                
+                if click and btn_rect.collidepoint((mx, my)):
+                    load_track_asset(f_name)
+                    manual_reset = True # Restart generation
+                    paused = False # Close menu
+            
+            back_rect = pygame.Rect(SCREEN_WIDTH//2 - 50, SCREEN_HEIGHT - 100, 100, 40)
+            draw_rounded_button(screen, (100, 100, 100), back_rect, FONT_MAIN.render("Back", True, COLOR_TEXT_WHITE))
+            if click and back_rect.collidepoint((mx, my)): menu_state = "main"
+
+        elif menu_state == "instructions":
+            draw_centered_text(screen, "INSTRUCTIONS", FONT_MENU, COLOR_TEXT_WHITE, -200)
+            
+            lines = [
+                "Goal: The AI must learn to drive around the track.",
+                "Generation: Cars evolve over time using NEAT.",
+                "Controls:",
+                "- ESC: Open this menu",
+                "- I: Toggle Telemetry Panel",
+                "- N: Toggle Neural Network View",
+                "- R / Reset Button: Force new generation",
+                "",
+                "Green Lines = Vision Sensors",
+                "Red/Green Panel = Control Inputs"
+            ]
+            
+            for i, line in enumerate(lines):
+                draw_centered_text(screen, line, FONT_HEADER, COLOR_TEXT_WHITE, -120 + (i * 30))
+                
+            back_rect = pygame.Rect(SCREEN_WIDTH//2 - 50, SCREEN_HEIGHT - 100, 100, 40)
+            draw_rounded_button(screen, (100, 100, 100), back_rect, FONT_MAIN.render("Back", True, COLOR_TEXT_WHITE))
+            if click and back_rect.collidepoint((mx, my)): menu_state = "main"
+
+        pygame.display.update()
+
 class Car(pygame.sprite.Sprite):
     def __init__(self, car_id):
         super().__init__()
@@ -184,7 +310,9 @@ class Car(pygame.sprite.Sprite):
         self.original_image = pygame.transform.scale(self.original_image, (int(self.original_image.get_width() * car_scale), int(self.original_image.get_height() * car_scale)))
         self.image = self.original_image
         
+        # Start Pos adjusted for scaling ratio relative to original designed track
         self.start_pos = (490 * (scaled_width / original_width), 820 * (scaled_height / original_height))
+        
         self.rect = self.image.get_rect(center=self.start_pos)
         self.vel_vector = pygame.math.Vector2(0.8, 0)
         self.angle = 0
@@ -212,8 +340,6 @@ class Car(pygame.sprite.Sprite):
         self.current_brake = 0.0
         self.target_brake = 0.0
         
-        # --- FIX: Removed smoothing latency for AI training ---
-        # 1.0 = Instant response. This helps AI learn Cause-and-Effect much faster.
         self.STEER_SMOOTHING = 1.0 
         self.ACCEL_SMOOTHING = 1.0
 
@@ -271,8 +397,6 @@ class Car(pygame.sprite.Sprite):
         self.speed *= 0.99 
         self.speed = max(0, min(self.max_speed, self.speed))
         self.rect.center += self.vel_vector * self.speed
-        
-        # IMPORTANT: Fitness relies on this
         self.distance_travelled += self.speed   
 
     def check_lap(self):
@@ -309,6 +433,7 @@ class Car(pygame.sprite.Sprite):
         def is_collision(pt):
             if pt[0] < 0 or pt[0] >= max_w or pt[1] < 0 or pt[1] >= max_h: return True
             try:
+                # Assuming Green (2, 105, 31) is tarmac/safe area
                 return TRACK.get_at(pt) == pygame.Color(2, 105, 31, 255)
             except: return True
 
@@ -342,20 +467,13 @@ class Car(pygame.sprite.Sprite):
 
     def data(self):
             input_data = [0, 0, 0, 0, 0, 0]
-            
-            # 1. Radar Sensors (Inputs 0-4)
             for i, radar in enumerate(self.radars):
                 normalized_dist = int(radar[1]) / (300.0 * self.scale)
                 input_data[i] = 1.0 - max(0.0, min(1.0, normalized_dist))
-                
-            # 2. Current Speed (Input 5)
-            # Normalize speed (0 to 1 based on max_speed)
             input_data[5] = self.speed / self.max_speed
-            
             return input_data
 
 def draw_f1_leaderboard(screen, cars):
-    # --- COLORS & LAYOUT ---
     COLOR_HEADER_BG = (215, 80, 65)
     COLOR_ROW_BG = (28, 32, 38)
     COLOR_ROW_ALT = (34, 38, 45)
@@ -367,17 +485,11 @@ def draw_f1_leaderboard(screen, cars):
     header_height = 45
     row_height = 36
     
-    # --- DATA PREP ---
-    # CHANGE: Filter to include ONLY alive cars
     active_cars = [group.sprite for group in cars if group.sprite.alive]
-    
-    # Sort cars by distance travelled (Leader at top)
     active_cars.sort(key=lambda x: x.distance_travelled, reverse=True)
     
-    # Fill the entire UI panel sidebar with the dark background first
     pygame.draw.rect(screen, COLOR_ROW_BG, (0, 0, UI_WIDTH, SCREEN_HEIGHT))
 
-    # --- DRAW HEADER ---
     header_rect = pygame.Rect(start_x, start_y, UI_WIDTH, header_height)
     pygame.draw.rect(screen, COLOR_HEADER_BG, header_rect)
     
@@ -385,39 +497,30 @@ def draw_f1_leaderboard(screen, cars):
     title_rect = title_surf.get_rect(midleft=(start_x + 15, start_y + header_height // 2))
     screen.blit(title_surf, title_rect)
 
-    # --- DRAW ROWS ---
     max_rows = int((SCREEN_HEIGHT - header_height) / row_height)
     
     for i, car in enumerate(active_cars[:max_rows]):
         curr_y = header_height + (i * row_height)
-        
-        # Draw alternating row background
         if i % 2 == 1:
             pygame.draw.rect(screen, COLOR_ROW_ALT, (start_x, curr_y, UI_WIDTH, row_height))
             
         text_y_center = curr_y + (row_height // 2)
         
-        # 1. POS (Rank)
         rank_txt = FONT_MAIN.render(str(i + 1), True, COLOR_TEXT_MAIN)
         rank_rect = rank_txt.get_rect(midleft=(start_x + 15, text_y_center))
         screen.blit(rank_txt, rank_rect)
         
-        # 2. CAR NAME
         car_name_txt = FONT_MAIN.render(f"CAR {car.car_id}", True, COLOR_TEXT_MAIN)
         car_rect = car_name_txt.get_rect(midleft=(start_x + 50, text_y_center))
         screen.blit(car_name_txt, car_rect)
         
-        # 3. LAP COUNT
         lap_count = len(car.lap_times)
         lap_txt = FONT_NET.render(f"L{lap_count}", True, COLOR_TEXT_DIM)
         lap_rect = lap_txt.get_rect(midleft=(start_x + 150, text_y_center))
         screen.blit(lap_txt, lap_rect)
         
-        # 4. TIME
-        if car.lap_times:
-            t_str = format_time(car.lap_times[-1])
-        else:
-            t_str = format_time(car.current_lap_time)
+        if car.lap_times: t_str = format_time(car.lap_times[-1])
+        else: t_str = format_time(car.current_lap_time)
             
         time_txt = FONT_MAIN.render(t_str, True, COLOR_TEXT_MAIN)
         time_rect = time_txt.get_rect(midright=(UI_WIDTH - 15, text_y_center))
@@ -472,19 +575,13 @@ def draw_telemetry_panel(screen, cars):
 
 def draw_chase_cam(screen, leader):
     global EXIT_BUTTON_RECT, RESET_BUTTON_RECT
-
     CAM_SIZE = 250
     ZOOM = 2.0
     VIEW_SIZE = CAM_SIZE / ZOOM
-    
-    # Position: Top Right
     cam_x = SCREEN_WIDTH - CAM_SIZE - 20
     cam_y = 20 
-    
-    # Draw Camera View
     lens = pygame.Surface((int(VIEW_SIZE), int(VIEW_SIZE)))
     lens.fill((30, 30, 30))
-    
     if leader:
         offset_x = -leader.rect.centerx + (VIEW_SIZE / 2)
         offset_y = -leader.rect.centery + (VIEW_SIZE / 2)
@@ -494,42 +591,30 @@ def draw_chase_cam(screen, leader):
 
     final_view = pygame.transform.scale(lens, (int(CAM_SIZE), int(CAM_SIZE)))
     screen.blit(final_view, (cam_x, cam_y))
-    
-    # Draw White Border around Camera
     pygame.draw.rect(screen, (255, 255, 255), (cam_x - 2, cam_y - 2, CAM_SIZE + 4, CAM_SIZE + 4), 2)
     
-    # Label
-    #screen.blit(FONT_HEADER.render("CAM", True, (0, 0, 0)), (cam_x + 10, cam_y + 10))
-
-    # --- ROUNDED BUTTONS ---
     btn_w = 70
     btn_h = 28
     padding = 8
     
-    # 1. Exit Button (Red)
     exit_x = cam_x + CAM_SIZE - btn_w - padding
     exit_y = cam_y + padding
     EXIT_BUTTON_RECT = pygame.Rect(exit_x, exit_y, btn_w, btn_h)
-    
     label_exit = FONT_MAIN.render("EXIT", True, (255, 255, 255))
     draw_rounded_button(screen, (200, 50, 50), EXIT_BUTTON_RECT, label_exit)
     
-    # 2. Reset Button (Orange)
     reset_x = exit_x - btn_w - padding
     reset_y = cam_y + padding
     RESET_BUTTON_RECT = pygame.Rect(reset_x, reset_y, btn_w, btn_h)
-    
     label_reset = FONT_MAIN.render("RESET", True, (255, 255, 255))
     draw_rounded_button(screen, (220, 120, 0), RESET_BUTTON_RECT, label_reset)
 
 def draw_neural_network(screen, genome, config, car, inputs, outputs):
-    # ... (Keep Config & Colors section the same) ...
     panel_w = 520
     panel_h = 300
     panel_x = SCREEN_WIDTH - panel_w - 20 
     panel_y = SCREEN_HEIGHT - panel_h - 20
     
-    # Colors
     COLOR_BG = (30, 33, 40)
     COLOR_DIVIDER = (60, 65, 75)
     COLOR_ACCENT_GREEN = (80, 220, 120)
@@ -550,7 +635,6 @@ def draw_neural_network(screen, genome, config, car, inputs, outputs):
     divider_x = panel_x + graph_width
     pygame.draw.line(screen, COLOR_DIVIDER, (divider_x, panel_y + 40), (divider_x, panel_y + panel_h - 20), 2)
     
-    # CHANGE: Added -6 for the speed input
     input_nodes = [-1, -2, -3, -4, -5, -6] 
     output_nodes = [0, 1, 2, 3]
     
@@ -558,7 +642,6 @@ def draw_neural_network(screen, genome, config, car, inputs, outputs):
     node_values = {} 
     layer_h = panel_h - 60
     
-    # Inputs
     for i, node_key in enumerate(input_nodes):
         x = panel_x + 40
         y = panel_y + 60 + (i * (layer_h / len(input_nodes)))
@@ -567,7 +650,6 @@ def draw_neural_network(screen, genome, config, car, inputs, outputs):
         val = inputs[i] if i < len(inputs) else 0.0
         node_values[node_key] = val
 
-        # Label: S0-S4 are sensors, S5 is Speed
         lbl = f"S{i}" if i < 5 else "SPD"
         label = FONT_NET.render(lbl, True, (150, 150, 150))
         screen.blit(label, (x - 25, y - 5))
@@ -575,8 +657,6 @@ def draw_neural_network(screen, genome, config, car, inputs, outputs):
         color = COLOR_ACCENT_GREEN if val > 0.1 else (80, 80, 80)
         pygame.draw.circle(screen, color, (int(x), int(y)), 6)
 
-    # ... (Keep the rest of the function exactly the same: Outputs, Connections, Telemetry) ...
-    # Outputs
     output_labels = ["L", "R", "B", "G"]
     for i, node_key in enumerate(output_nodes):
         x = divider_x - 40
@@ -590,7 +670,6 @@ def draw_neural_network(screen, genome, config, car, inputs, outputs):
         color = COLOR_ACCENT_GREEN if val > 0.5 else (80, 80, 80)
         pygame.draw.circle(screen, color, (int(x), int(y)), 6)
 
-    # Connections
     for cg in genome.connections.values():
         if not cg.enabled: continue
         in_node, out_node = cg.key
@@ -604,7 +683,6 @@ def draw_neural_network(screen, genome, config, car, inputs, outputs):
             width = max(1, min(2, int(abs(cg.weight))))
             pygame.draw.line(screen, color, start, end, width)
 
-    # Telemetry
     bar_start_x = divider_x + 20
     current_y = panel_y + 50
     screen.blit(FONT_MAIN.render("Vision Sensors", True, (255, 255, 255)), (bar_start_x, current_y))
@@ -671,7 +749,6 @@ def eval_genomes(genomes, config):
     
     while run:
         if manual_reset: run = False
-        # Stop generation after 10 minutes to prevent stalling
         if (pygame.time.get_ticks() - start_time) > 600000: run = False
 
         for event in pygame.event.get():
@@ -681,6 +758,12 @@ def eval_genomes(genomes, config):
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_i: show_telemetry = not show_telemetry
                 if event.key == pygame.K_n: show_network = not show_network
+                
+                # --- MENU TRIGGER ---
+                if event.key == pygame.K_ESCAPE:
+                    handle_pause_menu(SCREEN)
+                    # If menu caused a manual reset (new map), break loop
+                    if manual_reset: run = False
 
         alive_cars = [c.sprite for c in cars if c.sprite.alive]
         leader = None
@@ -701,16 +784,11 @@ def eval_genomes(genomes, config):
             car = car_group.sprite
             if not car.alive: continue
 
-            # --- INPUT HANDLING ---
-            # Get 6 inputs (5 radars + 1 speed)
             car_inputs = car.data()
-            
-            # Protection: If config.txt still says 5 inputs, slice the list to prevent crash
             if len(car_inputs) > len(nets[i].input_nodes):
                 car_inputs = car_inputs[:len(nets[i].input_nodes)]
 
             if car.time_alive < 30:
-                 # Auto-drive inputs for launch
                  raw = [0, 0, 0, 0]
             else:
                  raw = nets[i].activate(car_inputs)
@@ -732,22 +810,15 @@ def eval_genomes(genomes, config):
             is_leader = (car == leader)
             car.update(is_leader=is_leader)
 
-            # --- UPDATED FITNESS FUNCTION ---
             if math.isfinite(car.speed):
-                # 1. Reward Distance (Basic Survival)
                 genomes[i][1].fitness += car.speed * 0.1
-                
-                # 2. Reward High Speed Aggressively (Squared Speed)
-                # This makes 20 speed worth 4x more than 10 speed.
                 if car.speed > 5:
                     genomes[i][1].fitness += (car.speed ** 1.5) * 0.05
 
-            # Punish for going too slow after launch
             if car.time_alive > 100 and car.speed < 2:
-                genomes[i][1].fitness -= 2 # Penalty
+                genomes[i][1].fitness -= 2 
                 car.alive = False
 
-        # Camera Logic
         if leader:
             game_center_x = UI_WIDTH + (GAME_WIDTH / 2)
             game_center_y = SCREEN_HEIGHT / 2
@@ -756,7 +827,6 @@ def eval_genomes(genomes, config):
             cam_x += (target_cam_x - cam_x) * CAMERA_SMOOTHING
             cam_y += (target_cam_y - cam_y) * CAMERA_SMOOTHING
 
-        # Drawing
         SCREEN.fill((20, 20, 20))
         game_view_rect = pygame.Rect(UI_WIDTH, 0, GAME_WIDTH, SCREEN_HEIGHT)
         SCREEN.set_clip(game_view_rect)
@@ -788,28 +858,15 @@ def eval_genomes(genomes, config):
             draw_neural_network(SCREEN, leader_genome, config, leader, leader_inputs, leader_outputs)
         draw_ui_buttons(SCREEN)
 
-        # --- LAP COMPLETION & REWARD ---
         for i, car_group in enumerate(cars):
             car = car_group.sprite
             genome = genomes[i][1]
             if car.lap_completed and car.lap_times:
                 last_lap = car.lap_times[-1]      
                 lap_seconds = last_lap / 1000.0
-                
-                # REWARD LOGIC: Inverse Time
-                # The faster the time, the higher the denominator divides, 
-                # but we want High Score = Low Time.
-                # Formula: Constant / Time
-                
-                # Base bonus for finishing
                 genome.fitness += 1000 
-                
-                # Performance Bonus
-                # Example: 30s lap = 6000/30 = 200 pts
-                # Example: 15s lap = 6000/15 = 400 pts (Double reward)
                 time_bonus = 6000 / max(1, lap_seconds) * 10 
                 genome.fitness += time_bonus
-                
                 car.lap_completed = False
 
         pygame.display.update()
