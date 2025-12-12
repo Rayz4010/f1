@@ -35,7 +35,7 @@ CAMERA_SMOOTHING = 0.1
 
 # Load Assets
 try:
-    TRACK = pygame.image.load(os.path.join("assets", "track2.png")).convert()
+    TRACK = pygame.image.load(os.path.join("assets", "track.png")).convert()
 except FileNotFoundError:
     print("Error: assets/track.png not found. Please ensure the file exists.")
     pygame.quit()
