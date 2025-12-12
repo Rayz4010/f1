@@ -98,6 +98,20 @@ def format_time(ms):
     milliseconds = int(ms % 1000)
     return f"{minutes}:{seconds:02}.{milliseconds:03}"
 
+def draw_rounded_button(surface, color, rect, text_surf):
+    """Draws a button with rounded corners."""
+    # Draw the rounded rectangle
+    # border_radius=8 gives it the soft roundness. 
+    # Use border_radius=int(rect.height/2) for a full "pill" shape.
+    pygame.draw.rect(surface, color, rect, border_radius=12)
+    
+    # Optional: Draw a thin border to make it pop
+    pygame.draw.rect(surface, (255, 255, 255), rect, 2, border_radius=8)
+    
+    # Center the text
+    text_rect = text_surf.get_rect(center=rect.center)
+    surface.blit(text_surf, text_rect)
+    
 def draw_chamfered_button(surface, color, rect, text_surf):
     """Draws a button with chamfered (cut) corners."""
     x, y, w, h = rect
@@ -130,7 +144,7 @@ def draw_ui_buttons(surface):
 
     # --- RESET BUTTON ---
     # Using the new chamfered style with the existing orange color
-    label_reset = FONT_MAIN.render("New Gen", True, BUTTON_TEXT_COLOR)
+    label_reset = FONT_MAIN.render("Reset", True, BUTTON_TEXT_COLOR)
     draw_chamfered_button(surface, RESET_BUTTON_COLOR, RESET_BUTTON_RECT, label_reset)
     
 def _monitor_buttons_thread():
@@ -335,38 +349,73 @@ class Car(pygame.sprite.Sprite):
         return input
 
 def draw_f1_leaderboard(screen, cars):
+    # --- COLORS & LAYOUT ---
+    COLOR_HEADER_BG = (215, 80, 65)
+    COLOR_ROW_BG = (28, 32, 38)
+    COLOR_ROW_ALT = (34, 38, 45)
+    COLOR_TEXT_MAIN = (240, 240, 240)
+    COLOR_TEXT_DIM = (150, 150, 150)
+    
     start_x = 0
     start_y = 0
-    row_height = 40 
+    header_height = 45
+    row_height = 36
+    
+    # --- DATA PREP ---
+    # CHANGE: Filter to include ONLY alive cars
     active_cars = [group.sprite for group in cars if group.sprite.alive]
+    
+    # Sort cars by distance travelled (Leader at top)
     active_cars.sort(key=lambda x: x.distance_travelled, reverse=True)
+    
+    # Fill the entire UI panel sidebar with the dark background first
+    pygame.draw.rect(screen, COLOR_ROW_BG, (0, 0, UI_WIDTH, SCREEN_HEIGHT))
 
-    header_rect = pygame.Rect(start_x, start_y, UI_WIDTH, row_height)
-    pygame.draw.rect(screen, (255, 0, 0), header_rect)
-    header_text = FONT_HEADER.render("POS  DRIVER      LAPS   TIME", True, COLOR_TEXT_WHITE)
-    screen.blit(header_text, (start_x + 10, start_y + 10))
+    # --- DRAW HEADER ---
+    header_rect = pygame.Rect(start_x, start_y, UI_WIDTH, header_height)
+    pygame.draw.rect(screen, COLOR_HEADER_BG, header_rect)
+    
+    title_surf = FONT_HEADER.render("LEADERBOARD", True, (255, 255, 255))
+    title_rect = title_surf.get_rect(midleft=(start_x + 15, start_y + header_height // 2))
+    screen.blit(title_surf, title_rect)
 
-    for i, car in enumerate(active_cars):
-        y_pos = start_y + row_height + (i * row_height)
-        text_color = COLOR_TEXT_WHITE
-        time_text = ""
-        if len(car.lap_times) > 0:
-            last_lap = car.lap_times[-1]
-            time_text = format_time(last_lap)
-            if last_lap == BEST_OVERALL_LAP: text_color = COLOR_PURPLE
-            elif last_lap == car.personal_best: text_color = COLOR_GREEN
+    # --- DRAW ROWS ---
+    max_rows = int((SCREEN_HEIGHT - header_height) / row_height)
+    
+    for i, car in enumerate(active_cars[:max_rows]):
+        curr_y = header_height + (i * row_height)
+        
+        # Draw alternating row background
+        if i % 2 == 1:
+            pygame.draw.rect(screen, COLOR_ROW_ALT, (start_x, curr_y, UI_WIDTH, row_height))
+            
+        text_y_center = curr_y + (row_height // 2)
+        
+        # 1. POS (Rank)
+        rank_txt = FONT_MAIN.render(str(i + 1), True, COLOR_TEXT_MAIN)
+        rank_rect = rank_txt.get_rect(midleft=(start_x + 15, text_y_center))
+        screen.blit(rank_txt, rank_rect)
+        
+        # 2. CAR NAME
+        car_name_txt = FONT_MAIN.render(f"CAR {car.car_id}", True, COLOR_TEXT_MAIN)
+        car_rect = car_name_txt.get_rect(midleft=(start_x + 50, text_y_center))
+        screen.blit(car_name_txt, car_rect)
+        
+        # 3. LAP COUNT
+        lap_count = len(car.lap_times)
+        lap_txt = FONT_NET.render(f"L{lap_count}", True, COLOR_TEXT_DIM)
+        lap_rect = lap_txt.get_rect(midleft=(start_x + 150, text_y_center))
+        screen.blit(lap_txt, lap_rect)
+        
+        # 4. TIME
+        if car.lap_times:
+            t_str = format_time(car.lap_times[-1])
         else:
-            time_text = format_time(car.current_lap_time)
-            text_color = (255, 255, 200)
-
-        pygame.draw.line(screen, (50, 50, 50), (start_x, y_pos), (UI_WIDTH, y_pos), 1)
-        screen.blit(FONT_MAIN.render(f"{i + 1}", True, text_color), (start_x + 10, y_pos + 10))
-        screen.blit(FONT_MAIN.render(f"CAR {car.car_id}", True, text_color), (start_x + 50, y_pos + 10))
-        current_lap_num = len(car.lap_times) + 1
-        screen.blit(FONT_MAIN.render(f"L {current_lap_num}", True, text_color), (start_x + 180, y_pos + 10))
-        time_render = FONT_MAIN.render(time_text, True, text_color)
-        time_rect = time_render.get_rect(right=UI_WIDTH - 20, top=y_pos + 10)
-        screen.blit(time_render, time_rect)
+            t_str = format_time(car.current_lap_time)
+            
+        time_txt = FONT_MAIN.render(t_str, True, COLOR_TEXT_MAIN)
+        time_rect = time_txt.get_rect(midright=(UI_WIDTH - 15, text_y_center))
+        screen.blit(time_txt, time_rect)
 
 def draw_telemetry_panel(screen, cars):
     panel_width = 230
@@ -416,40 +465,56 @@ def draw_telemetry_panel(screen, cars):
                 pygame.draw.rect(screen, COLOR_BLUE, (center_x + steer_pixels, steer_y, abs(steer_pixels), bar_height))
 
 def draw_chase_cam(screen, leader):
+    global EXIT_BUTTON_RECT, RESET_BUTTON_RECT
+
     CAM_SIZE = 250
-    ZOOM = 1.8
+    ZOOM = 2.0
     VIEW_SIZE = CAM_SIZE / ZOOM
     
-    # --- POSITION UPDATE: TOP RIGHT ---
-    # Calculate X to be on the right side (Screen Width - Camera Width - Padding)
+    # Position: Top Right
     cam_x = SCREEN_WIDTH - CAM_SIZE - 20
+    cam_y = 20 
     
-    # Calculate Y to be at the top, but below the buttons (Button Y + Height + Padding)
-    # Buttons are at BUTTON_PADDING (20) + BUTTON_HEIGHT (48) = 68px bottom
-    cam_y = BUTTON_PADDING + BUTTON_HEIGHT + 20 
-    # ----------------------------------
-
+    # Draw Camera View
     lens = pygame.Surface((int(VIEW_SIZE), int(VIEW_SIZE)))
     lens.fill((30, 30, 30))
     
-    offset_x = -leader.rect.centerx + (VIEW_SIZE / 2)
-    offset_y = -leader.rect.centery + (VIEW_SIZE / 2)
-    
-    lens.blit(TRACK, (offset_x, offset_y))
-    
-    car_draw_pos = (int(VIEW_SIZE/2 - leader.image.get_width()/2), int(VIEW_SIZE/2 - leader.image.get_height()/2))
-    lens.blit(leader.image, car_draw_pos)
-    
+    if leader:
+        offset_x = -leader.rect.centerx + (VIEW_SIZE / 2)
+        offset_y = -leader.rect.centery + (VIEW_SIZE / 2)
+        lens.blit(TRACK, (offset_x, offset_y))
+        car_draw_pos = (int(VIEW_SIZE/2 - leader.image.get_width()/2), int(VIEW_SIZE/2 - leader.image.get_height()/2))
+        lens.blit(leader.image, car_draw_pos)
+
     final_view = pygame.transform.scale(lens, (int(CAM_SIZE), int(CAM_SIZE)))
-    
-    # Draw border
-    pygame.draw.rect(screen, (255, 255, 255), (cam_x - 2, cam_y - 2, CAM_SIZE + 4, CAM_SIZE + 4), 2)
-    
     screen.blit(final_view, (cam_x, cam_y))
     
-    # Draw Label (Moved inside the box at the bottom, or just above it)
-    # Let's put it slightly above the camera box
-    screen.blit(FONT_MAIN.render("CHASE CAM", True, (255, 255, 255)), (cam_x, cam_y - 20))
+    # Draw White Border around Camera
+    pygame.draw.rect(screen, (255, 255, 255), (cam_x - 2, cam_y - 2, CAM_SIZE + 4, CAM_SIZE + 4), 2)
+    
+    # Label
+    #screen.blit(FONT_HEADER.render("CAM", True, (0, 0, 0)), (cam_x + 10, cam_y + 10))
+
+    # --- ROUNDED BUTTONS ---
+    btn_w = 70
+    btn_h = 28
+    padding = 8
+    
+    # 1. Exit Button (Red)
+    exit_x = cam_x + CAM_SIZE - btn_w - padding
+    exit_y = cam_y + padding
+    EXIT_BUTTON_RECT = pygame.Rect(exit_x, exit_y, btn_w, btn_h)
+    
+    label_exit = FONT_MAIN.render("EXIT", True, (255, 255, 255))
+    draw_rounded_button(screen, (200, 50, 50), EXIT_BUTTON_RECT, label_exit)
+    
+    # 2. Reset Button (Orange)
+    reset_x = exit_x - btn_w - padding
+    reset_y = cam_y + padding
+    RESET_BUTTON_RECT = pygame.Rect(reset_x, reset_y, btn_w, btn_h)
+    
+    label_reset = FONT_MAIN.render("RESET", True, (255, 255, 255))
+    draw_rounded_button(screen, (220, 120, 0), RESET_BUTTON_RECT, label_reset)
 
 def draw_neural_network(screen, genome, config, car, inputs, outputs):
     # --- CONFIG & COLORS ---
